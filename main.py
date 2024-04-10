@@ -14,40 +14,100 @@ class SerialApp:
 
         self.serial_port = serial.Serial()
         self.serial_port.timeout = 1
+    
+        #//////////
+        # frames
+        #//////////
 
-        self.text_area = scrolledtext.ScrolledText(master, wrap=tk.WORD, bg='white', fg='black')
-        self.text_area.pack(padx=10, pady=10)
+        ###upper frame
+        self.upper_frame=tk.Frame(master, bg='white')
+        self.upper_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        self.entry = tk.Entry(master, bg='white', fg='black')
-        self.entry.pack(padx=10, pady=10)
+        ###bottom Frame 
+        self.bottom_frame = tk.Frame(master, bg='white')
+        self.bottom_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        self.send_button = tk.Button(master, text="Send", command=self.send_data, bg='white', fg='black')
-        self.send_button.pack(padx=10, pady=10)
-        self.entry.bind('<Return>', self.send_data)  # 綁定 Enter 鍵到 send_data 方法
+        ###left Frame 
+        self.left_frame = tk.Frame(self.upper_frame, bg='white')
+        self.left_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
 
-        self.port_label = tk.Label(master, text="Select COM Port:", bg='white', fg='black')
-        self.port_label.pack(padx=10, pady=5)
+        ###bottom Col_1 Frame 
+        self.bottom_c1_frame = tk.Frame(self.bottom_frame, bg='white')
+        self.bottom_c1_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        self.combobox = ttk.Combobox(master, values=self.get_ports(), state='readonly')
-        self.combobox.pack(padx=10, pady=5)
+        ###bottom Col_2 Frame 
+        self.bottom_c2_frame = tk.Frame(self.bottom_frame, bg='white')
+        self.bottom_c2_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        self.baudrate_label = tk.Label(master, text="Select Baudrate:", bg='white', fg='black')
-        self.baudrate_label.pack(padx=10, pady=5)
 
-        self.baudrate_combobox = ttk.Combobox(master, values=[300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 ,921600], state='readonly')
-        self.baudrate_combobox.pack(padx=10, pady=5)
-        self.baudrate_combobox.set(9600)  # Set default baudrate
+        #//////////
+        # styles 
+        #//////////
 
-        self.connect_button = tk.Button(master, text="Connect", command=self.toggle_connection, bg='white', fg='black')
-        self.connect_button.pack(padx=10, pady=10)
+        self.style = ttk.Style()
+        self.style.configure('send_button.TButton', 
+                background='white', 
+                foreground='gray', 
+                font=('Arial', 12, 'bold'), 
+                borderwidth=0, 
+                relief='raised')
+        
+        self.style.configure('connect_button.TButton', 
+                background='green', 
+                foreground='green', 
+                font=('Arial', 12, 'bold'), 
+                borderwidth=0, 
+                relief='raised')
 
-        self.filter_button = tk.Button(master, text="Set Filter", command=self.set_filter, bg='white', fg='black')
-        self.filter_button.pack(padx=10, pady=10)
+        #//////////
+        # elements 
+        #//////////
+
+        self.text_area = scrolledtext.ScrolledText(self.upper_frame, wrap=tk.WORD, bg='white', fg='black')
+        self.text_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.text_area.configure(font=("Consolas", 11,"normal"))
+
+        self.entry = tk.Entry(self.bottom_c1_frame, bg='white', fg='black')
+        self.entry.pack(side=tk.LEFT,padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.entry.configure(font=("Consolas", 15,"normal"))
+
+        self.send_button = ttk.Button(self.bottom_c1_frame, text="Send", command=self.send_input_data, style='send_button.TButton')
+        self.send_button.pack(side=tk.RIGHT,padx=10, pady=10)
+        self.entry.bind('<Return>', self.send_input_data)  # 綁定 Enter 鍵到 send_input_data 方法
+
+        self.connect_button = tk.Button(self.bottom_c2_frame, text="Connect", command=self.toggle_connection, bg='white', fg='black')
+        self.connect_button.pack(side=tk.LEFT,padx=10, pady=10)
+
+        self.port_label = tk.Label(self.bottom_c2_frame, text="Select COM Port:", bg='white', fg='black')
+        self.port_label.pack(side=tk.LEFT,padx=10, pady=5)
+
+        self.combobox = ttk.Combobox(self.bottom_c2_frame, values=self.get_ports(), state='readonly')
+        self.combobox.pack(side=tk.LEFT,padx=10, pady=5)
+
+        self.baudrate_label = tk.Label(self.bottom_c2_frame, text="Select Baudrate:", bg='white', fg='black')
+        self.baudrate_label.pack(side=tk.LEFT,padx=10, pady=5)
+
+        self.baudrate_combobox = ttk.Combobox(self.bottom_c2_frame, values=[300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 ,921600], state='readonly')
+        self.baudrate_combobox.pack(side=tk.LEFT,padx=10, pady=5)
+        self.baudrate_combobox.set(115200)  # Set default baudrate
+
+        self.filter_button = ttk.Button(self.bottom_c2_frame, text="Set Filter", command=self.set_filter)
+        self.filter_button.pack(side=tk.LEFT,padx=10, pady=10)
 
         self.filter_string = ""  # 過濾條件的字串
         self.filter_active = False  # 過濾條件是否啟用的布爾變量
 
-    def send_data(self, event=None):  # 添加 event 參數以處理事件綁定
+        self.button1 = ttk.Button(self.left_frame, text="Command 1", command=lambda: self.send_command("CMD1"))
+        self.button1.pack(pady=5)
+        self.button2 = ttk.Button(self.left_frame, text="Command 2", command=lambda: self.send_command("CMD2"))
+        self.button2.pack(pady=5)
+
+    def send_command(self, command):
+        if self.serial_port.is_open:
+            data = command+'\n'
+            self.serial_port.write(data.encode())
+
+    def send_input_data(self, event=None):  # 添加 event 參數以處理事件綁定
         data = self.entry.get() + '\n'  # 在字符串末尾添加換行符號
         if self.serial_port.is_open:
             self.serial_port.write(data.encode())
