@@ -4,6 +4,7 @@ import serial
 import threading
 import serial.tools.list_ports
 import tkinter.messagebox as msg
+from tkinter import simpledialog
 
 class SerialApp:
     def __init__(self, master):
@@ -40,9 +41,11 @@ class SerialApp:
         self.connect_button = tk.Button(master, text="Connect", command=self.toggle_connection, bg='white', fg='black')
         self.connect_button.pack(padx=10, pady=10)
 
-        self.receive_thread = threading.Thread(target=self.receive_data)
-        self.receive_thread.daemon = True
-        self.receive_thread.start()
+        self.filter_button = tk.Button(master, text="Set Filter", command=self.set_filter, bg='white', fg='black')
+        self.filter_button.pack(padx=10, pady=10)
+
+        self.filter_string = ""  # 過濾條件的字串
+        self.filter_active = False  # 過濾條件是否啟用的布爾變量
 
     def send_data(self, event=None):  # 添加 event 參數以處理事件綁定
         data = self.entry.get() + '\n'  # 在字符串末尾添加換行符號
@@ -50,12 +53,22 @@ class SerialApp:
             self.serial_port.write(data.encode())
         self.entry.delete(0, tk.END)  # 發送後清空輸入框
 
+    def set_filter(self):
+        self.filter_string = simpledialog.askstring("Input", "Enter the string to filter by:",
+                                                    parent=self.master)
+        if self.filter_string is not None:
+            self.filter_active = True
+
     def receive_data(self):
-        while True:
+        while self.receive_thread_running:
             if self.serial_port.is_open:
                 data = self.serial_port.readline()
                 if data:
-                    self.text_area.insert(tk.END, data.decode())
+                    decoded_data = data.decode()
+                    if self.filter_active and self.filter_string in decoded_data:
+                        self.text_area.insert(tk.END, decoded_data)
+                    elif not self.filter_active:
+                        self.text_area.insert(tk.END, decoded_data)
                     self.text_area.yview(tk.END)
 
     def get_ports(self):
@@ -69,6 +82,11 @@ class SerialApp:
             self.connect_port()
 
     def connect_port(self):
+        self.receive_thread = threading.Thread(target=self.receive_data)
+        self.receive_thread.daemon = True
+        self.receive_thread_running = True  # 新增一個標誌來控制線程的運行
+        self.receive_thread.start()
+        
         selected_port = self.combobox.get()
         selected_baudrate = self.baudrate_combobox.get()
         try:
@@ -82,7 +100,9 @@ class SerialApp:
 
     def disconnect(self):
         if self.serial_port.is_open:
+            self.receive_thread_running = False  # 設置標誌為 False 來停止線程
             self.serial_port.close()
+            self.receive_thread.join()  # 等待線程結束
             self.connect_button.config(text="Connect", bg='white')  # 恢復按鈕狀態
 
 if __name__ == "__main__":
