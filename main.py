@@ -5,6 +5,7 @@ import threading
 import serial.tools.list_ports
 import tkinter.messagebox as msg
 from tkinter import simpledialog
+import customtkinter as ctk
 
 class SerialApp:
     def __init__(self, master):
@@ -14,29 +15,35 @@ class SerialApp:
 
         self.serial_port = serial.Serial()
         self.serial_port.timeout = 1
+
+        ctk.set_appearance_mode("dark")  # Modes: system (default), light, dark
     
         #//////////
         # frames
         #//////////
 
         ###upper frame
-        self.upper_frame=tk.Frame(master, bg='white')
-        self.upper_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.upper_frame=ctk.CTkFrame(master)
+        self.upper_frame.pack( padx=10, pady=10,fill=tk.BOTH, expand=True)
 
         ###bottom Frame 
-        self.bottom_frame = tk.Frame(master, bg='white')
+        self.bottom_frame = ctk.CTkFrame(master)
         self.bottom_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
         ###left Frame 
-        self.left_frame = tk.Frame(self.upper_frame, bg='white')
-        self.left_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
+        self.left_frame = ctk.CTkFrame(self.upper_frame )
+        self.left_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+        ###bottom wiget Frame 
+        self.bottom_widget_frame = ctk.CTkFrame(self.bottom_frame)
+        self.bottom_widget_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
         ###bottom Col_1 Frame 
-        self.bottom_c1_frame = tk.Frame(self.bottom_frame, bg='white')
+        self.bottom_c1_frame = ctk.CTkFrame(self.bottom_frame)
         self.bottom_c1_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
         ###bottom Col_2 Frame 
-        self.bottom_c2_frame = tk.Frame(self.bottom_frame, bg='white')
+        self.bottom_c2_frame = ctk.CTkFrame(self.bottom_frame)
         self.bottom_c2_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
 
@@ -63,43 +70,47 @@ class SerialApp:
         # elements 
         #//////////
 
-        self.text_area = scrolledtext.ScrolledText(self.upper_frame, wrap=tk.WORD, bg='white', fg='black')
-        self.text_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-        self.text_area.configure(font=("Consolas", 11,"normal"))
+        self.text_area = ctk.CTkTextbox(self.upper_frame, wrap=tk.WORD)
+        self.text_area.pack( fill=tk.BOTH, expand=True)
+        self.text_area.configure(font=("Consolas", 13,"normal"))
 
-        self.entry = tk.Entry(self.bottom_c1_frame, bg='white', fg='black')
+        self.entry = ctk.CTkEntry(self.bottom_c1_frame)
         self.entry.pack(side=tk.LEFT,padx=10, pady=10, fill=tk.BOTH, expand=True)
         self.entry.configure(font=("Consolas", 15,"normal"))
 
-        self.send_button = ttk.Button(self.bottom_c1_frame, text="Send", command=self.send_input_data, style='send_button.TButton')
+        self.send_button = ctk.CTkButton(self.bottom_c1_frame, text="Send", command=self.send_input_data)
         self.send_button.pack(side=tk.RIGHT,padx=10, pady=10)
         self.entry.bind('<Return>', self.send_input_data)  # 綁定 Enter 鍵到 send_input_data 方法
 
-        self.connect_button = tk.Button(self.bottom_c2_frame, text="Connect", command=self.toggle_connection, bg='white', fg='black')
+        self.clear_button = ctk.CTkButton(self.bottom_widget_frame, text="Clear", command=self.clear_text_area,fg_color="transparent", border_width=2)
+        self.clear_button.pack(side=tk.LEFT)
+
+        self.filter_button = ctk.CTkButton(self.bottom_widget_frame, text="Set Filter", command=self.set_filter,fg_color="transparent", border_width=2)
+        self.filter_button.pack(side=tk.LEFT,padx=2)
+
+        self.connect_button = tk.Button(self.bottom_c2_frame, text="Connect", command=self.toggle_connection,  width=10, height=4, bd=0, bg='#16825D', fg='white', activeforeground='white', relief='flat',font=("Consolas", 11,"bold"))
         self.connect_button.pack(side=tk.LEFT,padx=10, pady=10)
 
-        self.port_label = tk.Label(self.bottom_c2_frame, text="Select COM Port:", bg='white', fg='black')
+        self.port_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select COM Port:")
         self.port_label.pack(side=tk.LEFT,padx=10, pady=5)
 
-        self.combobox = ttk.Combobox(self.bottom_c2_frame, values=self.get_ports(), state='readonly')
+        self.combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=self.get_ports())
         self.combobox.pack(side=tk.LEFT,padx=10, pady=5)
 
-        self.baudrate_label = tk.Label(self.bottom_c2_frame, text="Select Baudrate:", bg='white', fg='black')
+        self.baudrate_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select Baudrate:")
         self.baudrate_label.pack(side=tk.LEFT,padx=10, pady=5)
 
-        self.baudrate_combobox = ttk.Combobox(self.bottom_c2_frame, values=[300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 ,921600], state='readonly')
+        self.baudrate_combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=["300", "600", "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200" ,"921600"])
         self.baudrate_combobox.pack(side=tk.LEFT,padx=10, pady=5)
-        self.baudrate_combobox.set(115200)  # Set default baudrate
-
-        self.filter_button = ttk.Button(self.bottom_c2_frame, text="Set Filter", command=self.set_filter)
-        self.filter_button.pack(side=tk.LEFT,padx=10, pady=10)
+        self.baudrate_combobox.set("115200")  # Set default baudrate
 
         self.filter_string = ""  # 過濾條件的字串
         self.filter_active = False  # 過濾條件是否啟用的布爾變量
 
-        self.button1 = ttk.Button(self.left_frame, text="Command 1", command=lambda: self.send_command("CMD1"))
+
+        self.button1 = ttk.Button(self.left_frame, text="lte debug on", command=lambda: self.send_command("lte debug on"))
         self.button1.pack(pady=5)
-        self.button2 = ttk.Button(self.left_frame, text="Command 2", command=lambda: self.send_command("CMD2"))
+        self.button2 = ttk.Button(self.left_frame, text="system shutdown", command=lambda: self.send_command("system shutdown"))
         self.button2.pack(pady=5)
 
     def send_command(self, command):
@@ -142,30 +153,37 @@ class SerialApp:
             self.connect_port()
 
     def connect_port(self):
-        self.receive_thread = threading.Thread(target=self.receive_data)
-        self.receive_thread.daemon = True
-        self.receive_thread_running = True  # 新增一個標誌來控制線程的運行
-        self.receive_thread.start()
-        
         selected_port = self.combobox.get()
         selected_baudrate = self.baudrate_combobox.get()
         try:
             self.serial_port.port = selected_port
             self.serial_port.baudrate = int(selected_baudrate)
             self.serial_port.open()
-            msg.showinfo("Success", "Connected to " + selected_port + " at " + selected_baudrate + " baudrate.")
+            #msg.showinfo("Success", "Connected to " + selected_port + " at " + selected_baudrate + " baudrate.")
             self.connect_button.config(text="Disconnect", bg='red')  # 更新按鈕狀態
         except serial.SerialException as e:
             msg.showerror("Connection Error", "Error: could not connect to " + selected_port + ". " + str(e))
 
+        if self.serial_port.is_open:
+            self.receive_thread = threading.Thread(target=self.receive_data)
+            self.receive_thread.daemon = True
+            self.receive_thread_running = True  # 新增一個標誌來控制線程的運行
+            self.receive_thread.start()
+
     def disconnect(self):
         if self.serial_port.is_open:
             self.receive_thread_running = False  # 設置標誌為 False 來停止線程
+            self.serial_port.reset_input_buffer()
+            self.serial_port.reset_output_buffer()
             self.serial_port.close()
             self.receive_thread.join()  # 等待線程結束
-            self.connect_button.config(text="Connect", bg='white')  # 恢復按鈕狀態
+            self.connect_button.config(text="Connect", bg='#16825D')  # 恢復按鈕狀態
+
+    def clear_text_area(self):
+        # Clear the text area
+        self.text_area.delete(1.0, tk.END)
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     app = SerialApp(root)
     root.mainloop()
