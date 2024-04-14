@@ -1,3 +1,4 @@
+import time
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 import serial
@@ -46,26 +47,6 @@ class SerialApp:
         self.bottom_c2_frame = ctk.CTkFrame(self.bottom_frame)
         self.bottom_c2_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-
-        #//////////
-        # styles 
-        #//////////
-
-        self.style = ttk.Style()
-        self.style.configure('send_button.TButton', 
-                background='white', 
-                foreground='gray', 
-                font=('Arial', 12, 'bold'), 
-                borderwidth=0, 
-                relief='raised')
-        
-        self.style.configure('connect_button.TButton', 
-                background='green', 
-                foreground='green', 
-                font=('Arial', 12, 'bold'), 
-                borderwidth=0, 
-                relief='raised')
-
         #//////////
         # elements 
         #//////////
@@ -77,6 +58,12 @@ class SerialApp:
         self.entry = ctk.CTkEntry(self.bottom_c1_frame)
         self.entry.pack(side=tk.LEFT,padx=10, pady=10, fill=tk.BOTH, expand=True)
         self.entry.configure(font=("Consolas", 15,"normal"))
+
+        self.send_every_sw = ctk.CTkSwitch(self.bottom_c1_frame, text=" ",command=self.send_every_event)
+        self.send_every_sw.pack(side=tk.RIGHT,padx=10, pady=10)
+
+        self.send_every_entry = ctk.CTkEntry(self.bottom_c1_frame, placeholder_text="Send Every..sec",width=100)
+        self.send_every_entry.pack(side=tk.RIGHT,padx=10, pady=10)
 
         self.send_button = ctk.CTkButton(self.bottom_c1_frame, text="Send", command=self.send_input_data)
         self.send_button.pack(side=tk.RIGHT,padx=10, pady=10)
@@ -107,11 +94,13 @@ class SerialApp:
         self.filter_string = ""  # 過濾條件的字串
         self.filter_active = False  # 過濾條件是否啟用的布爾變量
 
-
-        self.button1 = ttk.Button(self.left_frame, text="lte debug on", command=lambda: self.send_command("lte debug on"))
-        self.button1.pack(pady=5)
-        self.button2 = ttk.Button(self.left_frame, text="system shutdown", command=lambda: self.send_command("system shutdown"))
-        self.button2.pack(pady=5)
+        self.ext_tab = ctk.CTkTabview(self.left_frame, width=250)
+        self.ext_tab.pack(padx=5,pady=5)
+        self.ext_tab.add("EXT 1")
+        self.ext_tab.add("EXT 2")
+        self.ext_tab.add("EXT 3")
+        self.ext_tab.tab("EXT 1").grid_columnconfigure(0, weight=1)  # configure grid of individual tabs
+        self.ext_tab.tab("EXT 2").grid_columnconfigure(0, weight=1)
 
     def send_command(self, command):
         if self.serial_port.is_open:
@@ -182,6 +171,32 @@ class SerialApp:
     def clear_text_area(self):
         # Clear the text area
         self.text_area.delete(1.0, tk.END)
+    
+    def send_every(self):
+        while self.send_every_thread_running:
+            send_every_sec=self.send_every_entry.get()
+            try:
+                send_every_sec = int(send_every_sec)
+            except:
+                msg.showerror("Value invalid","Value invalid! Please input correct value (in second).")
+                self.send_every_thread_running = False
+                self.send_every_sw.toggle() #turn off switch if value is invalid
+
+            time.sleep(send_every_sec)
+            self.send_input_data()
+            print("send_every")
+
+    def send_every_event(self):
+        send_every_sw_status=self.send_every_sw.get()
+        #print(send_every_sw_status)
+        if   send_every_sw_status == 0 :
+            self.send_every_thread_running = False
+        elif send_every_sw_status == 1 :
+            self.send_every_thread_running = True
+            self.send_every_thread = threading.Thread(target=self.send_every)
+            self.send_every_thread.start()
+            print("send_every_event send_every_sw_status =1")
+
 
 if __name__ == "__main__":
     root = ctk.CTk()
