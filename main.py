@@ -84,6 +84,9 @@ class SerialApp:
         self.combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=self.get_ports())
         self.combobox.pack(side=tk.LEFT,padx=10, pady=5)
 
+        self.com_port_refresh = ctk.CTkButton(self.bottom_c2_frame, text="Refresh", command=self.update_ports,width=50,fg_color="transparent",border_width=2)
+        self.com_port_refresh.pack(side=tk.LEFT,padx=5, pady=5)
+
         self.baudrate_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select Baudrate:")
         self.baudrate_label.pack(side=tk.LEFT,padx=10, pady=5)
 
@@ -111,7 +114,7 @@ class SerialApp:
         data = self.entry.get() + '\n'  # 在字符串末尾添加換行符號
         if self.serial_port.is_open:
             self.serial_port.write(data.encode())
-        self.entry.delete(0, tk.END)  # 發送後清空輸入框
+        #self.entry.delete(0, tk.END)  # 發送後清空輸入框
 
     def set_filter(self):
         self.filter_string = simpledialog.askstring("Input", "Enter the string to filter by:",
@@ -133,7 +136,15 @@ class SerialApp:
 
     def get_ports(self):
         ports = serial.tools.list_ports.comports()
-        return [port.device for port in ports]
+        if not [port.device for port in ports]:
+            return ["No port found"]
+        else:
+            return [port.device for port in ports]
+        
+    def update_ports(self):
+        port_list=self.get_ports()
+        self.combobox.configure(values=port_list)
+        self.combobox.set(port_list[0])
 
     def toggle_connection(self):
         if self.serial_port.is_open:
