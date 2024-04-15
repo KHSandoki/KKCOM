@@ -15,7 +15,7 @@ class SerialApp:
         master.configure(bg='white')
 
         self.serial_port = serial.Serial()
-        self.serial_port.timeout = 1
+        self.serial_port.timeout = 0.04
 
         ctk.set_appearance_mode("dark")  # Modes: system (default), light, dark
     
@@ -29,7 +29,7 @@ class SerialApp:
 
         ###bottom Frame 
         self.bottom_frame = ctk.CTkFrame(master)
-        self.bottom_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.bottom_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
 
         ###left Frame 
         self.left_frame = ctk.CTkFrame(self.upper_frame )
@@ -37,15 +37,36 @@ class SerialApp:
 
         ###bottom wiget Frame 
         self.bottom_widget_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_widget_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.bottom_widget_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
 
         ###bottom Col_1 Frame 
         self.bottom_c1_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_c1_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.bottom_c1_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
 
         ###bottom Col_2 Frame 
         self.bottom_c2_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_c2_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.bottom_c2_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+
+        ###EXT_tab
+        self.ext_tab = ctk.CTkTabview(self.left_frame, width=250)
+        self.ext_tab.pack(padx=5,pady=5)
+        self.ext_tab.add("EXT 1")
+        self.ext_tab.add("EXT 2")
+        self.ext_tab.add("EXT 3")
+        self.ext_tab.tab("EXT 1").grid_columnconfigure(0, weight=1)  # configure grid of individual tabs
+        self.ext_tab.tab("EXT 2").grid_columnconfigure(0, weight=1)
+
+        ###EXT1 Frame 
+        self.ext1_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 1"))
+        self.ext1_scrollable_frame.pack(fill=tk.BOTH, expand=True)
+
+        ###EXT2 Frame 
+        self.ext2_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 2"))
+        self.ext2_scrollable_frame.pack(fill=tk.BOTH, expand=True)
+
+        ###EXT3 Frame 
+        self.ext3_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 3"))
+        self.ext3_scrollable_frame.pack(fill=tk.BOTH, expand=True)
 
         #//////////
         # elements 
@@ -55,7 +76,7 @@ class SerialApp:
         self.text_area.pack( fill=tk.BOTH, expand=True)
         self.text_area.configure(font=("Consolas", 13,"normal"))
 
-        self.entry = ctk.CTkEntry(self.bottom_c1_frame)
+        self.entry = ctk.CTkEntry(self.bottom_c1_frame,font=("Consolas", 15,"normal"))
         self.entry.pack(side=tk.LEFT,padx=10, pady=10, fill=tk.BOTH, expand=True)
         self.entry.configure(font=("Consolas", 15,"normal"))
 
@@ -97,13 +118,17 @@ class SerialApp:
         self.filter_string = ""  # 過濾條件的字串
         self.filter_active = False  # 過濾條件是否啟用的布爾變量
 
-        self.ext_tab = ctk.CTkTabview(self.left_frame, width=250)
-        self.ext_tab.pack(padx=5,pady=5)
-        self.ext_tab.add("EXT 1")
-        self.ext_tab.add("EXT 2")
-        self.ext_tab.add("EXT 3")
-        self.ext_tab.tab("EXT 1").grid_columnconfigure(0, weight=1)  # configure grid of individual tabs
-        self.ext_tab.tab("EXT 2").grid_columnconfigure(0, weight=1)
+        self.ext1_entry_list    = []
+        self.ext1_button_list   = []
+        for i in range(100):
+            entry = ctk.CTkEntry(master=self.ext1_scrollable_frame)
+            entry.pack(padx=5, pady=5)
+            self.ext1_entry_list.append(entry)
+
+            button = ctk.CTkButton(master=self.ext1_scrollable_frame ,text=f"{i}")
+            button.pack(padx=5, pady=5)
+            button.configure(command=lambda i=i: self.ext_button_event(i))  # Pass the index to the callback
+            self.ext1_button_list.append(button)
 
     def send_command(self, command):
         if self.serial_port.is_open:
@@ -125,7 +150,7 @@ class SerialApp:
     def receive_data(self):
         while self.receive_thread_running:
             if self.serial_port.is_open:
-                data = self.serial_port.readline()
+                data = self.serial_port.readall()
                 if data:
                     decoded_data = data.decode()
                     if self.filter_active and self.filter_string in decoded_data:
@@ -193,8 +218,8 @@ class SerialApp:
                 self.send_every_thread_running = False
                 self.send_every_sw.toggle() #turn off switch if value is invalid
 
-            time.sleep(send_every_sec)
             self.send_input_data()
+            time.sleep(send_every_sec)
             print("send_every")
 
     def send_every_event(self):
@@ -208,6 +233,11 @@ class SerialApp:
             self.send_every_thread.start()
             print("send_every_event send_every_sw_status =1")
 
+    def ext_button_event(self,index):
+        # Get the text from the corresponding entry
+        entry_text = self.ext1_entry_list[index].get()
+        print(f"Button {index} pressed. Entry text: {entry_text}")
+        self.send_command(entry_text)
 
 if __name__ == "__main__":
     root = ctk.CTk()
