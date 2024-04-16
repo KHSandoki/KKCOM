@@ -7,6 +7,7 @@ import serial.tools.list_ports
 import tkinter.messagebox as msg
 from tkinter import simpledialog
 import customtkinter as ctk
+import json
 
 class SerialApp:
     def __init__(self, master):
@@ -118,6 +119,9 @@ class SerialApp:
         self.filter_string = ""  # 過濾條件的字串
         self.filter_active = False  # 過濾條件是否啟用的布爾變量
 
+        ext1_save_button = ctk.CTkButton(self.left_frame ,text="Save",command=self.ext_save,width=50,fg_color="transparent",border_width=2)
+        ext1_save_button.pack(padx=5, pady=5)
+
         self.ext1_entry_list    = []
         self.ext1_button_list   = []
         for i in range(100):
@@ -129,6 +133,8 @@ class SerialApp:
             button.pack(padx=5, pady=5)
             button.configure(command=lambda i=i: self.ext_button_event(i))  # Pass the index to the callback
             self.ext1_button_list.append(button)
+
+        self.ext_read()
 
     def send_command(self, command):
         if self.serial_port.is_open:
@@ -150,7 +156,7 @@ class SerialApp:
     def receive_data(self):
         while self.receive_thread_running:
             if self.serial_port.is_open:
-                data = self.serial_port.readall()
+                data = self.serial_port.readline()
                 if data:
                     decoded_data = data.decode()
                     if self.filter_active and self.filter_string in decoded_data:
@@ -239,6 +245,23 @@ class SerialApp:
         print(f"Button {index} pressed. Entry text: {entry_text}")
         self.send_command(entry_text)
 
+    def ext_save(self):
+        data_dict = {}
+        for i in range(100):
+            data_dict[f"entry_{i}"] = self.ext1_entry_list[i].get()
+            data_dict[f"button_{i}"] = 0
+
+        with open("data.json", "w") as json_file:
+            json.dump(data_dict, json_file)
+
+    def ext_read(self):
+        with open("data.json", 'r', encoding='UTF-8') as json_file:
+            json_content = json_file.read()
+            data = json.loads(json_content)
+
+        for i in range(100):
+            self.ext1_entry_list[i].insert(tk.END,data[f'entry_{i}'])
+            
 if __name__ == "__main__":
     root = ctk.CTk()
     app = SerialApp(root)
