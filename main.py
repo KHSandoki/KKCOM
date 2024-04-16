@@ -26,111 +26,148 @@ class SerialApp:
 
         ###upper frame
         self.upper_frame=ctk.CTkFrame(master)
-        self.upper_frame.pack( padx=10, pady=10,fill=tk.BOTH, expand=True)
+        self.upper_frame.grid(sticky='nsew', padx=10, pady=10,row=0, column=0)
 
         ###bottom Frame 
         self.bottom_frame = ctk.CTkFrame(master)
-        self.bottom_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        self.bottom_frame.grid(sticky='nsew', padx=10, pady=5)
 
         ###left Frame 
         self.left_frame = ctk.CTkFrame(self.upper_frame )
-        self.left_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        self.left_frame.grid( row=0, column=1)
 
         ###bottom wiget Frame 
         self.bottom_widget_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_widget_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        self.bottom_widget_frame.grid(sticky='nsew', padx=10, pady=5,row=0, column=0)
 
         ###bottom Col_1 Frame 
         self.bottom_c1_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_c1_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        self.bottom_c1_frame.grid(sticky='nsew', padx=10, pady=5)
 
         ###bottom Col_2 Frame 
         self.bottom_c2_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_c2_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        self.bottom_c2_frame.grid(sticky='nsew', padx=10, pady=5)
 
         ###EXT_tab
         self.ext_tab = ctk.CTkTabview(self.left_frame, width=250)
-        self.ext_tab.pack(padx=5,pady=5)
+        self.ext_tab.grid(sticky='nsew', padx=5, pady=5)
         self.ext_tab.add("EXT 1")
         self.ext_tab.add("EXT 2")
         self.ext_tab.add("EXT 3")
         self.ext_tab.tab("EXT 1").grid_columnconfigure(0, weight=1)  # configure grid of individual tabs
         self.ext_tab.tab("EXT 2").grid_columnconfigure(0, weight=1)
 
+        # Make the tab resizable
+        self.left_frame.grid_columnconfigure(0, weight=1)
+        self.left_frame.grid_rowconfigure(0, weight=1)
+
         ###EXT1 Frame 
         self.ext1_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 1"))
-        self.ext1_scrollable_frame.pack(fill=tk.BOTH, expand=True)
+        self.ext1_scrollable_frame.grid(sticky='nsew')
 
         ###EXT2 Frame 
         self.ext2_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 2"))
-        self.ext2_scrollable_frame.pack(fill=tk.BOTH, expand=True)
+        self.ext2_scrollable_frame.grid(sticky='nsew')
 
         ###EXT3 Frame 
         self.ext3_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 3"))
-        self.ext3_scrollable_frame.pack(fill=tk.BOTH, expand=True)
+        self.ext3_scrollable_frame.grid(sticky='nsew')
 
+        # Make the frames resizable
+        master.grid_columnconfigure(0, weight=1)
+        master.grid_rowconfigure(0, weight=1)
+
+        self.upper_frame.grid_columnconfigure(0, weight=1)
+        self.upper_frame.grid_rowconfigure(0, weight=1)
+
+        self.bottom_frame.grid_columnconfigure(0, weight=1)
+        self.bottom_frame.grid_rowconfigure(0, weight=1)
+
+        self.left_frame.grid_columnconfigure(0, weight=1)
+        self.left_frame.grid_rowconfigure(0, weight=1)
+
+        self.bottom_widget_frame.grid_columnconfigure(0, weight=1)
+        self.bottom_widget_frame.grid_rowconfigure(0, weight=1)
+
+        self.bottom_c1_frame.grid_columnconfigure(0, weight=1)
+        self.bottom_c1_frame.grid_rowconfigure(0, weight=1)
+
+        self.bottom_c2_frame.grid_columnconfigure(0, weight=1)
+        self.bottom_c2_frame.grid_rowconfigure(0, weight=1)
+
+        self.ext_tab.grid_columnconfigure(0, weight=1)
+        self.ext_tab.grid_rowconfigure(0, weight=1)
+
+        self.ext1_scrollable_frame.grid_columnconfigure(0, weight=1)
+        self.ext1_scrollable_frame.grid_rowconfigure(0, weight=1)
+
+        self.ext2_scrollable_frame.grid_columnconfigure(0, weight=1)
+        self.ext2_scrollable_frame.grid_rowconfigure(0, weight=1)
+
+        self.ext3_scrollable_frame.grid_columnconfigure(0, weight=1)
+        self.ext3_scrollable_frame.grid_rowconfigure(0, weight=1)
         #//////////
         # elements 
         #//////////
 
         self.text_area = ctk.CTkTextbox(self.upper_frame, wrap=tk.WORD)
-        self.text_area.pack( fill=tk.BOTH, expand=True)
+        self.text_area.grid(sticky='nsew', padx=10, pady=10 ,row=0, column=0)
+        self.upper_frame.grid_columnconfigure(0, weight=1)
+        self.upper_frame.grid_rowconfigure(0, weight=1)
         self.text_area.configure(font=("Consolas", 13,"normal"))
 
         self.entry = ctk.CTkEntry(self.bottom_c1_frame,font=("Consolas", 15,"normal"))
-        self.entry.pack(side=tk.LEFT,padx=10, pady=10, fill=tk.BOTH, expand=True)
-        self.entry.configure(font=("Consolas", 15,"normal"))
+        self.entry.grid(sticky='ew', padx=10, pady=10,row=0, column=0)
 
         self.send_every_sw = ctk.CTkSwitch(self.bottom_c1_frame, text=" ",command=self.send_every_event)
-        self.send_every_sw.pack(side=tk.RIGHT,padx=10, pady=10)
+        self.send_every_sw.grid(sticky='e', padx=10, pady=10,row=0, column=1)
 
         self.send_every_entry = ctk.CTkEntry(self.bottom_c1_frame, placeholder_text="Send Every..sec",width=100)
-        self.send_every_entry.pack(side=tk.RIGHT,padx=10, pady=10)
+        self.send_every_entry.grid(sticky='e', padx=10, pady=10 ,row=0, column=2)
 
         self.send_button = ctk.CTkButton(self.bottom_c1_frame, text="Send", command=self.send_input_data)
-        self.send_button.pack(side=tk.RIGHT,padx=10, pady=10)
-        self.entry.bind('<Return>', self.send_input_data)  # 綁定 Enter 鍵到 send_input_data 方法
+        self.send_button.grid(sticky='e', padx=10, pady=10  ,row=0, column=3)
 
         self.clear_button = ctk.CTkButton(self.bottom_widget_frame, text="Clear", command=self.clear_text_area,fg_color="transparent", border_width=2)
-        self.clear_button.pack(side=tk.LEFT)
+        self.clear_button.grid(sticky='w',row=0, column=0)
 
         self.filter_button = ctk.CTkButton(self.bottom_widget_frame, text="Set Filter", command=self.set_filter,fg_color="transparent", border_width=2)
-        self.filter_button.pack(side=tk.LEFT,padx=2)
+        self.filter_button.grid(sticky='w',row=0, column=1)
 
         self.connect_button = tk.Button(self.bottom_c2_frame, text="Connect", command=self.toggle_connection,  width=10, height=4, bd=0, bg='#16825D', fg='white', activeforeground='white', relief='flat',font=("Consolas", 11,"bold"))
-        self.connect_button.pack(side=tk.LEFT,padx=10, pady=10)
+        self.connect_button.grid(sticky='nsew',row=0, column=0, padx=10, pady=10)
 
         self.port_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select COM Port:")
-        self.port_label.pack(side=tk.LEFT,padx=10, pady=5)
+        self.port_label.grid(sticky='w', padx=2,row=0, column=1)
 
         self.combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=self.get_ports())
-        self.combobox.pack(side=tk.LEFT,padx=10, pady=5)
+        self.combobox.grid(sticky='w', padx=2,row=0, column=2)
 
         self.com_port_refresh = ctk.CTkButton(self.bottom_c2_frame, text="Refresh", command=self.update_ports,width=50,fg_color="transparent",border_width=2)
-        self.com_port_refresh.pack(side=tk.LEFT,padx=5, pady=5)
+        self.com_port_refresh.grid(sticky='w', padx=2,row=0, column=3)
 
         self.baudrate_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select Baudrate:")
-        self.baudrate_label.pack(side=tk.LEFT,padx=10, pady=5)
+        self.baudrate_label.grid(sticky='w', padx=2,row=0, column=4)
 
         self.baudrate_combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=["300", "600", "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200" ,"921600"])
-        self.baudrate_combobox.pack(side=tk.LEFT,padx=10, pady=5)
+        self.baudrate_combobox.grid(sticky='w', padx=2,row=0, column=5)
         self.baudrate_combobox.set("115200")  # Set default baudrate
 
         self.filter_string = ""  # 過濾條件的字串
         self.filter_active = False  # 過濾條件是否啟用的布爾變量
 
         ext1_save_button = ctk.CTkButton(self.left_frame ,text="Save",command=self.ext_save,width=50,fg_color="transparent",border_width=2)
-        ext1_save_button.pack(padx=5, pady=5)
+        ext1_save_button.grid(sticky='w', padx=2)
 
         self.ext1_entry_list    = []
         self.ext1_button_list   = []
         for i in range(100):
             entry = ctk.CTkEntry(master=self.ext1_scrollable_frame)
-            entry.pack(padx=5, pady=5)
+            entry.grid(sticky='', padx=2, row = i, column = 0)
             self.ext1_entry_list.append(entry)
 
-            button = ctk.CTkButton(master=self.ext1_scrollable_frame ,text=f"{i}")
-            button.pack(padx=5, pady=5)
+            button = ctk.CTkButton(master=self.ext1_scrollable_frame ,text=f"{i}",width=50,fg_color="transparent",border_width=2)
+            button.grid(sticky='', padx=2, row = i, column = 1)
             button.configure(command=lambda i=i: self.ext_button_event(i))  # Pass the index to the callback
             self.ext1_button_list.append(button)
 
