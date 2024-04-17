@@ -1,6 +1,6 @@
 import time
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import scrolledtext, ttk, Toplevel, Toplevel, Entry, Label, Button
 import serial
 import threading
 import serial.tools.list_ports
@@ -134,6 +134,10 @@ class SerialApp:
             button.configure(command=lambda i=i: self.ext_button_event(i))  # Pass the index to the callback
             self.ext1_button_list.append(button)
 
+            edit_button = ctk.CTkButton(self.ext1_scrollable_frame ,text="Edit",width=50,fg_color="transparent",border_width=2)
+            edit_button.pack(padx=5, pady=5)
+            edit_button.configure(command=lambda i=i: self.ext_edit_button_event(i))
+
         self.ext_read()
 
     def send_command(self, command):
@@ -244,6 +248,13 @@ class SerialApp:
         entry_text = self.ext1_entry_list[index].get()
         print(f"Button {index} pressed. Entry text: {entry_text}")
         self.send_command(entry_text)
+
+    def ext_edit_button_event(self,index):
+        #entry_text = self.ext1_button_list[index].get()
+        dialog = ctk.CTkInputDialog(text="Type in a name:", title="Edit")
+        self.ext1_button_list[index].configure(text=dialog.get_input())
+        print("Number:", dialog.get_input())
+        print(index)
 
     def ext_save(self):
         data_dict = {}
