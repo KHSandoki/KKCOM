@@ -14,6 +14,7 @@ class SerialApp:
         self.master = master
         master.title("KKCOM")
         master.configure(bg='white')
+        master.geometry(f"{1100}x{580}")
 
         self.serial_port = serial.Serial()
         self.serial_port.timeout = 0.04
@@ -33,8 +34,8 @@ class SerialApp:
         self.bottom_frame.grid(sticky='nsew', padx=10, pady=5)
 
         ###left Frame 
-        self.left_frame = ctk.CTkFrame(self.upper_frame )
-        self.left_frame.grid( row=0, column=1)
+        self.left_frame = ctk.CTkFrame(self.upper_frame)
+        self.left_frame.grid(sticky='nsew', row=0, column=1)
 
         ###bottom wiget Frame 
         self.bottom_widget_frame = ctk.CTkFrame(self.bottom_frame)
@@ -50,16 +51,14 @@ class SerialApp:
 
         ###EXT_tab
         self.ext_tab = ctk.CTkTabview(self.left_frame, width=250)
+        self.ext_tab.grid_columnconfigure(0, weight=1)
+        self.ext_tab.grid_rowconfigure(0, weight=1)
         self.ext_tab.grid(sticky='nsew', padx=5, pady=5)
         self.ext_tab.add("EXT 1")
         self.ext_tab.add("EXT 2")
         self.ext_tab.add("EXT 3")
         self.ext_tab.tab("EXT 1").grid_columnconfigure(0, weight=1)  # configure grid of individual tabs
         self.ext_tab.tab("EXT 2").grid_columnconfigure(0, weight=1)
-
-        # Make the tab resizable
-        self.left_frame.grid_columnconfigure(0, weight=1)
-        self.left_frame.grid_rowconfigure(0, weight=1)
 
         ###EXT1 Frame 
         self.ext1_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 1"))
@@ -135,22 +134,22 @@ class SerialApp:
         self.filter_button.grid(sticky='w',row=0, column=1)
 
         self.connect_button = tk.Button(self.bottom_c2_frame, text="Connect", command=self.toggle_connection,  width=10, height=4, bd=0, bg='#16825D', fg='white', activeforeground='white', relief='flat',font=("Consolas", 11,"bold"))
-        self.connect_button.grid(sticky='nsew',row=0, column=0, padx=10, pady=10)
+        self.connect_button.grid(sticky='w',row=0, column=0, padx=10, pady=10)
 
         self.port_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select COM Port:")
-        self.port_label.grid(sticky='w', padx=2,row=0, column=1)
+        self.port_label.grid(sticky='w', padx=2,row=1, column=0)
 
         self.combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=self.get_ports())
-        self.combobox.grid(sticky='w', padx=2,row=0, column=2)
+        self.combobox.grid(sticky='w',row=1, column=1)
 
         self.com_port_refresh = ctk.CTkButton(self.bottom_c2_frame, text="Refresh", command=self.update_ports,width=50,fg_color="transparent",border_width=2)
-        self.com_port_refresh.grid(sticky='w', padx=2,row=0, column=3)
+        self.com_port_refresh.grid(sticky='w',row=1, column=2)
 
         self.baudrate_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select Baudrate:")
-        self.baudrate_label.grid(sticky='w', padx=2,row=0, column=4)
+        self.baudrate_label.grid(sticky='w', padx=2,row=2, column=0)
 
         self.baudrate_combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=["300", "600", "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200" ,"921600"])
-        self.baudrate_combobox.grid(sticky='w', padx=2,row=0, column=5)
+        self.baudrate_combobox.grid(sticky='w', padx=2,row=2, column=1)
         self.baudrate_combobox.set("115200")  # Set default baudrate
 
         self.filter_string = ""  # 過濾條件的字串
@@ -171,19 +170,19 @@ class SerialApp:
             button.configure(command=lambda i=i: self.ext_button_event(i))  # Pass the index to the callback
             self.ext1_button_list.append(button)
 
-            edit_button = ctk.CTkButton(self.ext1_scrollable_frame ,text="Edit",width=50,fg_color="transparent",border_width=2)
-            edit_button.pack(padx=5, pady=5)
+            edit_button = ctk.CTkButton(self.ext1_scrollable_frame ,text="Edit",width=10,fg_color="transparent")
+            edit_button.grid(row = i, column = 2)
             edit_button.configure(command=lambda i=i: self.ext_edit_button_event(i))
 
         self.ext_read()
 
     def send_command(self, command):
         if self.serial_port.is_open:
-            data = command+'\n'
+            data = command+'\r\n'
             self.serial_port.write(data.encode())
 
     def send_input_data(self, event=None):  # 添加 event 參數以處理事件綁定
-        data = self.entry.get() + '\n'  # 在字符串末尾添加換行符號
+        data = self.entry.get() + '\r\n'  # 在字符串末尾添加換行符號
         if self.serial_port.is_open:
             self.serial_port.write(data.encode())
         #self.entry.delete(0, tk.END)  # 發送後清空輸入框
@@ -290,14 +289,12 @@ class SerialApp:
         #entry_text = self.ext1_button_list[index].get()
         dialog = ctk.CTkInputDialog(text="Type in a name:", title="Edit")
         self.ext1_button_list[index].configure(text=dialog.get_input())
-        print("Number:", dialog.get_input())
-        print(index)
 
     def ext_save(self):
         data_dict = {}
         for i in range(100):
             data_dict[f"entry_{i}"] = self.ext1_entry_list[i].get()
-            data_dict[f"button_{i}"] = 0
+            data_dict[f"button_{i}"] = self.ext1_button_list[i].cget("text")
 
         with open("data.json", "w") as json_file:
             json.dump(data_dict, json_file)
@@ -309,6 +306,7 @@ class SerialApp:
 
         for i in range(100):
             self.ext1_entry_list[i].insert(tk.END,data[f'entry_{i}'])
+            self.ext1_button_list[i].configure(text=data[f'button_{i}'])
             
 if __name__ == "__main__":
     root = ctk.CTk()
