@@ -176,6 +176,18 @@ class SerialApp:
 
         self.ext_read()
 
+        self.toggle_entry0 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="toggle command")
+        self.toggle_entry0.grid(sticky='', padx=2,row = 0, column = 0)
+        
+        self.toggle_entry1 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="toggle command")
+        self.toggle_entry1.grid(sticky='', padx=2,row = 1, column = 0)
+
+        self.toggle_entry_sec = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="Send Every..sec")
+        self.toggle_entry_sec.grid(sticky='', padx=2,row = 2, column = 0)
+
+        self.toggle_send_sw = ctk.CTkSwitch(master=self.ext2_scrollable_frame ,text="Toggle Send Start",command=self.toggle_send_event)
+        self.toggle_send_sw.grid(sticky='', padx=2,row = 3, column = 0)
+        
     def send_command(self, command):
         if self.serial_port.is_open:
             data = command+'\r\n'
@@ -254,7 +266,7 @@ class SerialApp:
         # Clear the text area
         self.text_area.delete(1.0, tk.END)
     
-    def send_every(self):
+    def send_every(self, command=None):
         while self.send_every_thread_running:
             send_every_sec=self.send_every_entry.get()
             try:
@@ -264,7 +276,11 @@ class SerialApp:
                 self.send_every_thread_running = False
                 self.send_every_sw.toggle() #turn off switch if value is invalid
 
-            self.send_input_data()
+            if command is not None:
+                self.send_command(command)
+            else:
+                self.send_input_data()
+
             time.sleep(send_every_sec)
             print("send_every")
 
@@ -308,6 +324,22 @@ class SerialApp:
             self.ext1_entry_list[i].insert(tk.END,data[f'entry_{i}'])
             self.ext1_button_list[i].configure(text=data[f'button_{i}'])
             
+    def toggle_send_event(self):
+        toggle_send_sw_status = self.toggle_send_sw.get()
+        if toggle_send_sw_status == 0:
+            self.toggle_send_thread_running = False
+        else:
+            self.toggle_send_thread_running = True
+            self.toggle_send_thread = threading.Thread(target=self.toggle_send)
+            self.toggle_send_thread.start()
+
+    def toggle_send(self):
+        while self.toggle_send_thread_running:
+            self.send_command(self.toggle_entry0.get())
+            time.sleep(int(self.toggle_entry_sec.get()))
+            self.send_command(self.toggle_entry1.get())
+            time.sleep(int(self.toggle_entry_sec.get()))
+
 if __name__ == "__main__":
     root = ctk.CTk()
     app = SerialApp(root)
