@@ -1,3 +1,4 @@
+import os
 import time
 import tkinter as tk
 from tkinter import scrolledtext, ttk, Toplevel, Toplevel, Entry, Label, Button
@@ -14,7 +15,7 @@ class SerialApp:
         self.master = master
         master.title("KKCOM")
         master.configure(bg='white')
-        master.geometry(f"{1100}x{580}")
+        master.geometry(f"{1000}x{580}")
 
         self.serial_port = serial.Serial()
         self.serial_port.timeout = 0.04
@@ -31,7 +32,7 @@ class SerialApp:
 
         ###bottom Frame 
         self.bottom_frame = ctk.CTkFrame(master)
-        self.bottom_frame.grid(sticky='nsew', padx=10, pady=5)
+        self.bottom_frame.grid(sticky='nsw', padx=10, pady=5)
 
         ###left Frame 
         self.left_frame = ctk.CTkFrame(self.upper_frame)
@@ -39,15 +40,15 @@ class SerialApp:
 
         ###bottom wiget Frame 
         self.bottom_widget_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_widget_frame.grid(sticky='nsew', padx=10, pady=5,row=0, column=0)
+        self.bottom_widget_frame.grid(sticky='nsew', padx=10, pady=5,row=0, column=0, columnspan=2)
 
         ###bottom Col_1 Frame 
         self.bottom_c1_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_c1_frame.grid(sticky='nsew', padx=10, pady=5)
+        self.bottom_c1_frame.grid(sticky='nw', padx=10, pady=5 ,row=1, column=1)
 
         ###bottom Col_2 Frame 
         self.bottom_c2_frame = ctk.CTkFrame(self.bottom_frame)
-        self.bottom_c2_frame.grid(sticky='nsew', padx=10, pady=5)
+        self.bottom_c2_frame.grid(sticky='w', padx=10, pady=5, row=1, column=0)
 
         ###EXT_tab
         self.ext_tab = ctk.CTkTabview(self.left_frame, width=250)
@@ -61,7 +62,7 @@ class SerialApp:
         self.ext_tab.tab("EXT 2").grid_columnconfigure(0, weight=1)
 
         ###EXT1 Frame 
-        self.ext1_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 1"))
+        self.ext1_scrollable_frame = ctk.CTkScrollableFrame(self.ext_tab.tab("EXT 1"),height=350)
         self.ext1_scrollable_frame.grid(sticky='nsew')
 
         ###EXT2 Frame 
@@ -127,16 +128,16 @@ class SerialApp:
         self.send_button = ctk.CTkButton(self.bottom_c1_frame, text="Send", command=self.send_input_data)
         self.send_button.grid(sticky='e', padx=10, pady=10  ,row=0, column=3)
 
-        self.clear_button = ctk.CTkButton(self.bottom_widget_frame, text="Clear", command=self.clear_text_area,fg_color="transparent", border_width=2)
-        self.clear_button.grid(sticky='w',row=0, column=0)
+        self.clear_button = ctk.CTkButton(self.bottom_widget_frame, text="Clear", command=self.clear_text_area,fg_color="transparent", border_width=2,width=100)
+        self.clear_button.pack(side='left')
 
-        self.filter_button = ctk.CTkButton(self.bottom_widget_frame, text="Set Filter", command=self.set_filter,fg_color="transparent", border_width=2)
-        self.filter_button.grid(sticky='w',row=0, column=1)
+        self.filter_button = ctk.CTkButton(self.bottom_widget_frame, text="Set Filter", command=self.set_filter,fg_color="transparent", border_width=2,width=100)
+        self.filter_button.pack(side='left')
 
         self.connect_button = tk.Button(self.bottom_c2_frame, text="Connect", command=self.toggle_connection,  width=10, height=4, bd=0, bg='#16825D', fg='white', activeforeground='white', relief='flat',font=("Consolas", 11,"bold"))
-        self.connect_button.grid(sticky='w',row=0, column=0, padx=10, pady=10)
+        self.connect_button.grid(sticky='w',row=0, column=0, padx=10, pady=10 ,columnspan=3)
 
-        self.port_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select COM Port:")
+        self.port_label = ctk.CTkLabel(self.bottom_c2_frame, text="COM Port:")
         self.port_label.grid(sticky='w', padx=2,row=1, column=0)
 
         self.combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=self.get_ports())
@@ -145,7 +146,7 @@ class SerialApp:
         self.com_port_refresh = ctk.CTkButton(self.bottom_c2_frame, text="Refresh", command=self.update_ports,width=50,fg_color="transparent",border_width=2)
         self.com_port_refresh.grid(sticky='w',row=1, column=2)
 
-        self.baudrate_label = ctk.CTkLabel(self.bottom_c2_frame, text="Select Baudrate:")
+        self.baudrate_label = ctk.CTkLabel(self.bottom_c2_frame, text="Baudrate:")
         self.baudrate_label.grid(sticky='w', padx=2,row=2, column=0)
 
         self.baudrate_combobox = ctk.CTkComboBox(self.bottom_c2_frame, values=["300", "600", "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200" ,"921600"])
@@ -176,17 +177,20 @@ class SerialApp:
 
         self.ext_read()
 
-        self.toggle_entry0 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="toggle command")
+        self.toggle_entry0 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="toggle command0")
         self.toggle_entry0.grid(sticky='', padx=2,row = 0, column = 0)
         
-        self.toggle_entry1 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="toggle command")
+        self.toggle_entry1 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="toggle command1")
         self.toggle_entry1.grid(sticky='', padx=2,row = 1, column = 0)
 
-        self.toggle_entry_sec = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="Send Every..sec")
-        self.toggle_entry_sec.grid(sticky='', padx=2,row = 2, column = 0)
+        self.toggle_entry_sec0 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="Send Every..sec0")
+        self.toggle_entry_sec0.grid(sticky='', padx=2,row = 2, column = 0)
+
+        self.toggle_entry_sec1 = ctk.CTkEntry(self.ext2_scrollable_frame,placeholder_text="Send Every..sec1")
+        self.toggle_entry_sec1.grid(sticky='', padx=2,row = 3, column = 0)
 
         self.toggle_send_sw = ctk.CTkSwitch(master=self.ext2_scrollable_frame ,text="Toggle Send Start",command=self.toggle_send_event)
-        self.toggle_send_sw.grid(sticky='', padx=2,row = 3, column = 0)
+        self.toggle_send_sw.grid(sticky='', padx=2,row = 4, column = 0)
         
     def send_command(self, command):
         if self.serial_port.is_open:
@@ -316,19 +320,22 @@ class SerialApp:
             json.dump(data_dict, json_file)
 
     def ext_read(self):
-        with open("data.json", 'r', encoding='UTF-8') as json_file:
-            json_content = json_file.read()
-            data = json.loads(json_content)
+        if not os.path.isfile("data.json"):
+            return
+        else:
+            with open("data.json", 'r', encoding='UTF-8') as json_file:
+                json_content = json_file.read()
+                data = json.loads(json_content)
 
-        for i in range(100):
-            self.ext1_entry_list[i].insert(tk.END,data[f'entry_{i}'])
-            self.ext1_button_list[i].configure(text=data[f'button_{i}'])
+            for i in range(100):
+                self.ext1_entry_list[i].insert(tk.END,data[f'entry_{i}'])
+                self.ext1_button_list[i].configure(text=data[f'button_{i}'])
             
     def toggle_send_event(self):
         toggle_send_sw_status = self.toggle_send_sw.get()
         if toggle_send_sw_status == 0:
             self.toggle_send_thread_running = False
-        else:
+        elif toggle_send_sw_status == 1 :
             self.toggle_send_thread_running = True
             self.toggle_send_thread = threading.Thread(target=self.toggle_send)
             self.toggle_send_thread.start()
@@ -336,9 +343,9 @@ class SerialApp:
     def toggle_send(self):
         while self.toggle_send_thread_running:
             self.send_command(self.toggle_entry0.get())
-            time.sleep(int(self.toggle_entry_sec.get()))
+            time.sleep(int(self.toggle_entry_sec0.get()))
             self.send_command(self.toggle_entry1.get())
-            time.sleep(int(self.toggle_entry_sec.get()))
+            time.sleep(int(self.toggle_entry_sec1.get()))
 
 if __name__ == "__main__":
     root = ctk.CTk()
