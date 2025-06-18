@@ -1,1 +1,77 @@
+# Application data files
 data.json
+config.json
+*.log
+*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# C++ Build artifacts
+KKCOM_CPP/build/
+KKCOM_CPP/build_*/
+KKCOM_CPP/Release/
+KKCOM_CPP/Debug/
+KKCOM_CPP/x64/
+KKCOM_CPP/Win32/
+KKCOM_CPP/.vs/
+KKCOM_CPP/*.vcxproj.user
+KKCOM_CPP/*.vcxproj.filters
+KKCOM_CPP/*.sln
+KKCOM_CPP/*.suo
+KKCOM_CPP/*.opensdf
+KKCOM_CPP/*.sdf
+KKCOM_CPP/*.VC.db
+KKCOM_CPP/*.VC.opendb
+
+# vcpkg
+KKCOM_CPP/vcpkg/
+KKCOM_CPP/libs/
+
+# CMake
+KKCOM_CPP/CMakeCache.txt
+KKCOM_CPP/CMakeFiles/
+KKCOM_CPP/Makefile
+KKCOM_CPP/cmake_install.cmake
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temporary files
+*.tmp
+*.temp
+*.pid
+*.lock

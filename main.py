@@ -13,7 +13,7 @@ import json
 class SerialApp:
     def __init__(self, master):
         self.master = master
-        master.title("KKCOM")
+        master.title("KKCOM Python Edition v1.0.0")
         master.configure(bg='white')
         master.geometry(f"{1000}x{580}")
 
