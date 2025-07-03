@@ -31,10 +31,10 @@ if not exist "vcpkg.exe" (
     )
 )
 
-REM Install dependencies
-echo Installing dependencies...
-vcpkg install glfw3:x64-windows
-vcpkg install nlohmann-json:x64-windows
+REM Install dependencies (static versions)
+echo Installing dependencies (static linking)...
+vcpkg install glfw3:x64-windows-static
+vcpkg install nlohmann-json:x64-windows-static
 
 if %errorlevel% equ 0 (
     echo Dependencies installed successfully!

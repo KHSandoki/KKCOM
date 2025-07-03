@@ -7,12 +7,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Try to find packages, fallback to manual setup if not found
 find_package(OpenGL REQUIRED)
 
-# Try to find GLFW
+# Try to find GLFW (prefer static linking)
 find_package(glfw3 QUIET)
 if(NOT glfw3_FOUND)
     message(STATUS "GLFW not found via find_package, trying PkgConfig")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW3 REQUIRED glfw3)
+endif()
+
+# Force static linking for Windows
+if(WIN32)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    set(BUILD_SHARED_LIBS OFF)
+    # Use static runtime library for standalone executable
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 # Try to find nlohmann_json
@@ -60,6 +68,10 @@ target_link_libraries(${PROJECT_NAME} OpenGL::GL)
 
 if(glfw3_FOUND)
     target_link_libraries(${PROJECT_NAME} glfw)
+    # Additional Windows libraries needed for static GLFW
+    if(WIN32)
+        target_link_libraries(${PROJECT_NAME} user32 gdi32 shell32)
+    endif()
 elseif(GLFW3_FOUND)
     target_link_libraries(${PROJECT_NAME} ${GLFW3_LIBRARIES})
     target_include_directories(${PROJECT_NAME} PRIVATE ${GLFW3_INCLUDE_DIRS})

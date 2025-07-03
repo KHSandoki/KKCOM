@@ -28,13 +28,13 @@ REM Create build directory
 if not exist build_vcpkg mkdir build_vcpkg
 cd build_vcpkg
 
-REM Run CMake with vcpkg toolchain
-cmake .. -DCMAKE_TOOLCHAIN_FILE=..\vcpkg\scripts\buildsystems\vcpkg.cmake -G "Visual Studio 16 2019" -A x64
+REM Run CMake with vcpkg toolchain (static linking)
+cmake .. -DCMAKE_TOOLCHAIN_FILE=..\vcpkg\scripts\buildsystems\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -G "Visual Studio 16 2019" -A x64
 
 REM If VS2019 not found, try VS2022
 if %errorlevel% neq 0 (
     echo Trying Visual Studio 2022...
-    cmake .. -DCMAKE_TOOLCHAIN_FILE=..\vcpkg\scripts\buildsystems\vcpkg.cmake -G "Visual Studio 17 2022" -A x64
+    cmake .. -DCMAKE_TOOLCHAIN_FILE=..\vcpkg\scripts\buildsystems\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -G "Visual Studio 17 2022" -A x64
 )
 
 if %errorlevel% neq 0 (

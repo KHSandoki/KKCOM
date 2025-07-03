@@ -91,8 +91,23 @@ bool SerialApp::initialize() {
     refreshPorts();
     
     // Main loop
+    // Frame rate limiting
+    auto lastFrameTime = std::chrono::high_resolution_clock::now();
+    const auto targetFrameTime = std::chrono::milliseconds(16); // 60 FPS
+    
     while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        auto deltaTime = currentTime - lastFrameTime;
+        
+        if (deltaTime >= targetFrameTime) {
+            glfwPollEvents();
+            
+            // Reduce rendering frequency when window is not focused
+            bool windowFocused = glfwGetWindowAttrib(window, GLFW_FOCUSED);
+            if (!windowFocused && deltaTime < std::chrono::milliseconds(100)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
         
         // Start the Dear ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
@@ -112,6 +127,11 @@ bool SerialApp::initialize() {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         
         glfwSwapBuffers(window);
+            lastFrameTime = currentTime;
+        } else {
+            // Sleep to prevent busy waiting
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
     
     // Cleanup
@@ -393,8 +413,14 @@ void SerialApp::renderDataDisplay() {
     ImGui::BeginChild("DataScrolling", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
     
     std::lock_guard<std::mutex> lock(dataMutex_);
-    for (const auto& line : receivedData_) {
-        ImGui::TextUnformatted(line.c_str());
+    
+    // Use ImGui clipper for efficient rendering of large lists
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(receivedData_.size()));
+    while (clipper.Step()) {
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
+            ImGui::TextUnformatted(receivedData_[i].c_str());
+        }
     }
     
     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
