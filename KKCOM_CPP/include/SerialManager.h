@@ -18,13 +18,18 @@
 
 class SerialManager {
 public:
+    struct PortInfo {
+        std::string port;
+        std::string deviceName;
+    };
+
     using DataCallback = std::function<void(const std::string&)>;
     
     SerialManager();
     ~SerialManager();
     
     // Port management
-    std::vector<std::string> getAvailablePorts();
+    std::vector<PortInfo> getAvailablePorts();
     bool connect(const std::string& portName, int baudRate);
     void disconnect();
     bool isConnected() const { return connected_; }

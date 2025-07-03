@@ -323,7 +323,7 @@ void SerialApp::renderConnectionPanel() {
     if (!availablePorts_.empty()) {
         std::vector<const char*> portCStrings;
         for (const auto& port : availablePorts_) {
-            portCStrings.push_back(port.c_str());
+            portCStrings.push_back(port.deviceName.c_str());
         }
         ImGui::Combo("##Port", &selectedPortIndex_, portCStrings.data(), static_cast<int>(portCStrings.size()));
     }
@@ -617,7 +617,7 @@ void SerialApp::toggleConnection() {
         connected_ = false;
     } else {
         if (!availablePorts_.empty() && selectedPortIndex_ < static_cast<int>(availablePorts_.size())) {
-            const std::string& selectedPort = availablePorts_[selectedPortIndex_];
+            const std::string& selectedPort = availablePorts_[selectedPortIndex_].port;
             int baudRate = baudRates_[selectedBaudRate_];
             
             if (serialManager_.connect(selectedPort, baudRate)) {
@@ -695,9 +695,11 @@ void SerialApp::loadConfiguration() {
         
         // Set last port if available
         if (!config.lastPort.empty()) {
-            auto it = std::find(availablePorts_.begin(), availablePorts_.end(), config.lastPort);
-            if (it != availablePorts_.end()) {
-                selectedPortIndex_ = static_cast<int>(std::distance(availablePorts_.begin(), it));
+            for (size_t i = 0; i < availablePorts_.size(); ++i) {
+                if (availablePorts_[i].port == config.lastPort) {
+                    selectedPortIndex_ = static_cast<int>(i);
+                    break;
+                }
             }
         }
         

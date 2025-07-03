@@ -27,8 +27,8 @@ SerialManager::~SerialManager() {
     disconnect();
 }
 
-std::vector<std::string> SerialManager::getAvailablePorts() {
-    std::vector<std::string> ports;
+std::vector<SerialManager::PortInfo> SerialManager::getAvailablePorts() {
+    std::vector<PortInfo> ports;
     
 #ifdef _WIN32
     // Windows implementation
@@ -47,7 +47,13 @@ std::vector<std::string> SerialManager::getAvailablePorts() {
             DWORD size = sizeof(portName);
             if (RegQueryValueExA(key, "PortName", nullptr, nullptr, (LPBYTE)portName, &size) == ERROR_SUCCESS) {
                 if (strncmp(portName, "COM", 3) == 0) {
-                    ports.push_back(std::string(portName));
+                    char friendlyName[256];
+                    if (SetupDiGetDeviceRegistryPropertyA(deviceInfoSet, &deviceInfoData, SPDRP_FRIENDLYNAME, nullptr, (PBYTE)friendlyName, sizeof(friendlyName), nullptr)) {
+                        std::string displayName = std::string(portName) + " - " + std::string(friendlyName);
+                        ports.push_back({std::string(portName), displayName});
+                    } else {
+                        ports.push_back({std::string(portName), std::string(portName)});
+                    }
                 }
             }
             RegCloseKey(key);
@@ -63,7 +69,7 @@ std::vector<std::string> SerialManager::getAvailablePorts() {
         while ((entry = readdir(dir)) != nullptr) {
             std::string name = entry->d_name;
             if (name.find("ttyUSB") == 0 || name.find("ttyACM") == 0 || name.find("ttyS") == 0) {
-                ports.push_back("/dev/" + name);
+                ports.push_back({"/dev/" + name, "/dev/" + name});
             }
         }
         closedir(dir);
@@ -71,7 +77,7 @@ std::vector<std::string> SerialManager::getAvailablePorts() {
 #endif
     
     if (ports.empty()) {
-        ports.push_back("No ports found");
+        ports.push_back({"No ports found", "No ports found"});
     }
     
     return ports;
