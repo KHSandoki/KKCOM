@@ -407,13 +407,28 @@ void SerialApp::renderInputPanel() {
 }
 
 void SerialApp::renderDataDisplay() {
-    ImGui::Text("Received Data");
+    ImGui::Text("Received Data (Click to focus for single-key sending)");
     ImGui::Separator();
-    
-    ImGui::BeginChild("DataScrolling", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
-    
+
+    ImGui::BeginChild("DataScrolling", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+
+    // If this window is focused, capture character input
+    if (ImGui::IsWindowFocused()) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.InputQueueCharacters.Size > 0) {
+            for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
+                char c = io.InputQueueCharacters[i];
+                if (c >= 32 || c == '\n' || c == '\r' || c == '\t') { // Filter out control characters
+                    sendCommand(std::string(1, c));
+                }
+            }
+            // Clear the input queue to prevent processing these characters elsewhere
+            io.InputQueueCharacters.resize(0);
+        }
+    }
+
     std::lock_guard<std::mutex> lock(dataMutex_);
-    
+
     // Use ImGui clipper for efficient rendering of large lists
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(receivedData_.size()));
@@ -422,11 +437,11 @@ void SerialApp::renderDataDisplay() {
             ImGui::TextUnformatted(receivedData_[i].c_str());
         }
     }
-    
+
     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
         ImGui::SetScrollHereY(1.0f);
     }
-    
+
     ImGui::EndChild();
 }
 
