@@ -1,94 +1,74 @@
 # KKCOM C++ Edition
 
-A cross-platform serial communication tool built with C++ and Dear ImGui, rewritten from the original Python version.
+A modern C++ implementation of KKCOM serial communication tool with ImGui interface.
 
 ## Features
 
-- **Serial Communication**: Connect to COM ports with configurable baud rates
-- **Real-time Data Display**: View incoming serial data with filtering capabilities
-- **Custom Commands**: 300 programmable command buttons across 3 tabs
-- **Timed Sending**: Send commands at regular intervals
-- **Toggle Sending**: Alternate between two commands with individual timings
-- **Configuration Management**: Save/load settings to JSON files
-
-## Dependencies
-
-- C++17 compatible compiler
-- CMake 3.16+
-- OpenGL
-- GLFW3
-- nlohmann/json
-- Dear ImGui (included as submodule)
+- **Dual Mode Build System**
+  - Debug mode: Console window with detailed logging
+  - Release mode: Clean GUI without console
+- **Embedded Resources**
+  - Application icon and splash screen embedded in executable
+  - Single .exe file deployment
+- **Serial Communication**
+  - Multiple COM port support
+  - Configurable baud rates
+  - Real-time data reception
+- **Custom Commands**
+  - EXT command tabs
+  - Save/load command configurations
+  - Toggle send functionality
 
 ## Building
 
-### Linux/macOS
-
+### Debug Mode (with console)
 ```bash
-# Install dependencies (Ubuntu/Debian)
-sudo apt-get install libglfw3-dev libgl1-mesa-dev nlohmann-json3-dev
-
-# Build
-mkdir build
-cd build
-cmake ..
-make
+build_debug.bat
 ```
+Executable: `build_debug/Debug/KKCOM_CPP.exe`
 
-### Windows
-
+### Release Mode (GUI only)
 ```bash
-# Using vcpkg
-vcpkg install glfw3 nlohmann-json
-
-# Build with Visual Studio
-mkdir build
-cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
-cmake --build .
+build_release.bat
 ```
+Executable: `build_release/Release/KKCOM_CPP.exe`
 
-## Setup
+## Requirements
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd KKCOM_CPP
+- Visual Studio 2019 BuildTools or later
+- CMake 3.16+
+- vcpkg (included)
+
+## Dependencies
+
+All dependencies are managed through vcpkg:
+- GLFW3 (static)
+- nlohmann/json (static)
+- Dear ImGui (bundled)
+- stb_image (bundled)
+
+## Project Structure
+
 ```
-
-2. Initialize ImGui submodule:
-```bash
-git submodule update --init --recursive
+KKCOM_CPP/
+├── build_debug.bat     # Debug build script
+├── build_release.bat   # Release build script
+├── CMakeLists.txt      # Main CMake configuration
+├── KKCOM.rc           # Windows resource file
+├── include/           # Header files
+├── src/              # Source files
+├── libs/             # Third-party libraries
+├── vcpkg/            # Package manager
+└── assets/           # Resource files (if needed)
 ```
-
-3. Build the project (see Building section above)
-
-## Usage
-
-1. Run the executable:
-```bash
-./KKCOM_CPP  # Linux/macOS
-KKCOM_CPP.exe  # Windows
-```
-
-2. Select COM port and baud rate
-3. Click "Connect" to establish connection
-4. Use the input field to send commands manually
-5. Configure custom commands in the EXT tabs
-6. Save configuration using the "Save Config" button
 
 ## Configuration
 
-Settings are automatically saved to `config.json` including:
-- Custom command configurations
-- Last used COM port and baud rate
-- Filter settings
-- Toggle command settings
+The application supports both debug and release configurations:
 
-## Original Python Version
+- **Debug Mode**: `DEBUG_MODE=1` - Shows console window with detailed logging
+- **Release Mode**: `DEBUG_MODE=0` - Clean GUI application without console
 
-This C++ version maintains all functionality from the original Python tkinter application while providing:
-- Better performance
-- Cross-platform compatibility
-- Modern UI with Dear ImGui
-- Efficient threading model
+## License
+
+See the main KKCOM project for license information.

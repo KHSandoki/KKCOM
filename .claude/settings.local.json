@@ -8,7 +8,11 @@
       "Bash(git add:*)",
       "Bash(curl:*)",
       "Bash(./build_simple.bat)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(find:*)",
+      "Bash(true)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }
