@@ -4,6 +4,17 @@ project(KKCOM_CPP)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Debug mode option
+option(ENABLE_DEBUG_MODE "Enable debug mode with console window" OFF)
+
+if(ENABLE_DEBUG_MODE)
+    add_compile_definitions(DEBUG_MODE=1)
+    message(STATUS "Debug mode enabled - console window will be shown")
+else()
+    add_compile_definitions(DEBUG_MODE=0)
+    message(STATUS "Release mode - no console window")
+endif()
+
 # Try to find packages, fallback to manual setup if not found
 find_package(OpenGL REQUIRED)
 
@@ -60,11 +71,33 @@ endif()
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test_serial.cpp")
 
+# Windows resource file for icon
+if(WIN32)
+    set(RESOURCE_FILES "KKCOM.rc")
+    list(APPEND SOURCES ${RESOURCE_FILES})
+endif()
+
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${IMGUI_SOURCES})
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME} OpenGL::GL)
+
+# Set subsystem based on debug mode
+if(WIN32)
+    if(ENABLE_DEBUG_MODE)
+        # Debug mode: show console window
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            LINK_FLAGS "/SUBSYSTEM:CONSOLE"
+        )
+    else()
+        # Release mode: no console window
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            WIN32_EXECUTABLE TRUE
+            LINK_FLAGS "/SUBSYSTEM:WINDOWS"
+        )
+    endif()
+endif()
 
 if(glfw3_FOUND)
     target_link_libraries(${PROJECT_NAME} glfw)

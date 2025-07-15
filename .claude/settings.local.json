@@ -5,7 +5,10 @@
       "Bash(chmod:*)",
       "Bash(grep:*)",
       "Bash(git reset:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(curl:*)",
+      "Bash(./build_simple.bat)",
+      "Bash(cp:*)"
     ],
     "deny": []
   }

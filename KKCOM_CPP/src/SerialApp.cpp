@@ -1,4 +1,8 @@
 #include "SerialApp.h"
+#include "ResourceManager.h"
+#include "DebugConfig.h"
+#include "icon_data.h"
+#include "launch_data.h"
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -37,10 +41,29 @@ SerialApp::~SerialApp() {
     shutdown();
 }
 
+void SerialApp::showSplashScreen() {
+    // Initialize GLFW for splash screen
+    if (!glfwInit()) {
+        DEBUG_ERROR("Failed to initialize GLFW for splash screen");
+        return;
+    }
+    
+    DEBUG_PRINT("Showing splash screen");
+    
+    // Show splash screen with embedded resources
+    ResourceManager::showSplashScreen(image_launch_png, image_launch_png_len,
+                                    image_icon_png, image_icon_png_len);
+    
+    // Clean up GLFW after splash screen
+    glfwTerminate();
+}
+
 bool SerialApp::initialize() {
+    DEBUG_PRINT("Initializing main application");
+    
     // Initialize GLFW
     if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
+        DEBUG_ERROR("Failed to initialize GLFW");
         return false;
     }
     
@@ -51,10 +74,15 @@ bool SerialApp::initialize() {
     
     GLFWwindow* window = glfwCreateWindow(1200, 800, "KKCOM - C++ Edition", nullptr, nullptr);
     if (!window) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
+        DEBUG_ERROR("Failed to create GLFW window");
         glfwTerminate();
         return false;
     }
+    
+    DEBUG_PRINT("Created main window successfully");
+    
+    // Set window icon
+    setWindowIcon(window);
     
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1); // Enable vsync
@@ -881,4 +909,8 @@ void SerialApp::openFileDialog() {
     // You could integrate with libraries like nativefiledialog or tinyfiledialogs here
     strcpy(logFilePath_, "logs/com_log.txt"); // Default fallback
 #endif
+}
+
+void SerialApp::setWindowIcon(GLFWwindow* window) {
+    ResourceManager::setWindowIcon(window, image_icon_png, image_icon_png_len);
 }

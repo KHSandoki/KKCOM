@@ -2,8 +2,10 @@
 
 #include "SerialManager.h"
 #include "ConfigManager.h"
+#include "ResourceManager.h"
 #include "version.h"
 #include <imgui.h>
+#include <GLFW/glfw3.h>
 #include <string>
 #include <vector>
 #include <thread>
@@ -20,6 +22,9 @@ public:
     bool initialize();
     void run();
     void shutdown();
+    
+    // Static method for showing splash screen
+    static void showSplashScreen();
     
 private:
     // Core components
@@ -102,6 +107,7 @@ private:
     void loadConfiguration();
     void saveConfiguration();
     bool splitterV(const char* str_id, float* size1, float* size2, float min_size1, float min_size2);
+    void setWindowIcon(GLFWwindow* window);
     
     // Logging methods
     void startLogging();
