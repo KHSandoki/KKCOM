@@ -1,7 +1,7 @@
 # KKCOM - Serial Communication Tool
 
 <div align="center">
-  <img src="icon_design.svg" width="128" height="128" alt="KKCOM Logo">
+  <img src="image/icon.png" width="128" height="128" alt="KKCOM Logo">
   
   [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/KKCOM/releases)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -9,6 +9,11 @@
 </div>
 
 KKCOM is a powerful and user-friendly serial communication application available in both Python and C++ editions. It provides a terminal-like interface for COM port communication with advanced features for command management, data logging, and real-time monitoring.
+
+## Editions
+
+- **Python Edition**: Traditional tkinter-based implementation for cross-platform compatibility
+- **C++ Edition**: Modern ImGui-based implementation with embedded resources and dual-mode build system
 
 ## 🚀 Features
 
@@ -39,10 +44,10 @@ KKCOM is a powerful and user-friendly serial communication application available
 - pyserial
 
 ### C++ Edition
-- Windows: Visual Studio 2019+ or MinGW
-- Linux: GCC 7+ with C++17 support
-- macOS: Xcode 10+
-- Dependencies: ImGui, GLFW, OpenGL, nlohmann/json, vcpkg (recommended)
+- Windows: Visual Studio 2019+ BuildTools
+- CMake 3.16+
+- Dependencies: GLFW3, nlohmann/json, ImGui, stb_image (all managed via vcpkg)
+- Single executable deployment with embedded resources
 
 ## 🛠️ Installation & Usage
 
@@ -61,16 +66,19 @@ python main.py
 
 ### Building C++ Edition
 ```bash
-# Windows with vcpkg
+# Windows - Debug build (with console)
 cd KKCOM_CPP
-.\setup_vcpkg.bat
-.\build_vcpkg.bat
+.\build_debug.bat
 
-# Linux/macOS
+# Windows - Release build (GUI only)
 cd KKCOM_CPP
-chmod +x build.sh
-./build.sh
+.\build_release.bat
 ```
+
+The C++ edition features:
+- **Debug Mode**: Shows console window with detailed logging
+- **Release Mode**: Clean GUI application without console
+- **Embedded Resources**: Application icon and splash screen built into executable
 
 ## 📖 User Guide
 
@@ -100,10 +108,27 @@ KKCOM/
 ├── main.py                 # Python edition main application
 ├── KKCOM_CPP/             # C++ edition source code
 │   ├── include/           # Header files
+│   │   ├── SerialApp.h    # Main application class
+│   │   ├── SerialManager.h # Serial communication handling
+│   │   ├── ResourceManager.h # Embedded resource management
+│   │   ├── DebugConfig.h  # Debug/release configuration
+│   │   ├── icon_data.h    # Embedded icon data
+│   │   └── launch_data.h  # Embedded splash screen data
 │   ├── src/              # Source files
+│   │   ├── main.cpp      # Application entry point
+│   │   ├── SerialApp.cpp # Main application implementation
+│   │   ├── SerialManager.cpp # Serial communication logic
+│   │   └── ResourceManager.cpp # Resource loading implementation
+│   ├── libs/             # Third-party libraries (ImGui, etc.)
+│   ├── vcpkg/            # Package manager
 │   ├── CMakeLists.txt    # Build configuration
-│   └── build_vcpkg.bat   # Windows build script
-├── icons/                 # Application icons (SVG format)
+│   ├── KKCOM.rc          # Windows resource file
+│   ├── build_debug.bat   # Debug build script
+│   └── build_release.bat # Release build script
+├── image/                # Application images
+│   ├── icon.png          # Application icon
+│   ├── launch.png        # Splash screen image
+│   └── icon.ico          # Windows icon format
 ├── README.md             # This file
 ├── CLAUDE.md             # Development guidance
 └── .gitignore           # Git ignore rules
@@ -111,12 +136,12 @@ KKCOM/
 
 ## 🎨 Application Icons
 
-The project includes professionally designed icons in multiple formats:
-- **Detailed version** (256x256) for desktop shortcuts
-- **Simple version** (64x64) for small UI elements  
-- **Modern flat design** with animations for contemporary interfaces
+The project includes application icons in multiple formats:
+- **icon.png**: Main application icon (PNG format)
+- **icon.ico**: Windows executable icon (ICO format)
+- **launch.png**: Splash screen image
 
-See `README_ICONS.md` for conversion instructions and usage guidelines.
+Icons are embedded into the C++ executable for single-file deployment.
 
 ## 🔧 Configuration
 
@@ -149,10 +174,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ### v1.0.0-beta.1 (Current)
 - Initial release with core functionality
 - Python and C++ editions
-- Modern UI with resizable panels
+- C++ edition with embedded resources and dual-mode build system
+- Modern ImGui-based interface for C++ edition
 - Comprehensive logging system
 - 300+ programmable command buttons
-- Professional icon set
+- Embedded application icon and splash screen
 
 ## 📞 Support
 
