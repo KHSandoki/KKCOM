@@ -115,7 +115,14 @@ bool SerialApp::initialize() {
     
     // Load configuration
     loadConfiguration();
-    
+
+    // Auto-start logging with a generated filename to prevent overwriting
+    {
+        std::string autoName = generateAutoFilename();
+        strcpy(logFilePath_, autoName.c_str());
+        startLogging();
+    }
+
     // Setup serial data callback
     serialManager_.setDataCallback([this](const std::string& data) {
         onDataReceived(data);
@@ -184,14 +191,16 @@ void SerialApp::run() {
 }
 
 void SerialApp::shutdown() {
-    // Stop all threads
+    // Signal threads to stop and wake them immediately
     sendEveryRunning_ = false;
+    sendEveryCv_.notify_all();
     toggleSendRunning_ = false;
-    
+    toggleSendCv_.notify_all();
+
     if (sendEveryThread_.joinable()) {
         sendEveryThread_.join();
     }
-    
+
     if (toggleSendThread_.joinable()) {
         toggleSendThread_.join();
     }
@@ -392,12 +401,13 @@ void SerialApp::renderInputPanel() {
             sendEveryThread_ = std::thread(&SerialApp::sendEveryLoop, this);
         } else {
             sendEveryRunning_ = false;
+            sendEveryCv_.notify_all();
             if (sendEveryThread_.joinable()) {
                 sendEveryThread_.join();
             }
         }
     }
-    
+
     if (sendEveryEnabled_) {
         ImGui::SameLine();
         ImGui::PushItemWidth(100);
@@ -441,6 +451,9 @@ void SerialApp::renderInputPanel() {
 }
 
 void SerialApp::renderDataDisplay() {
+    // Drain receive queue into receivedData_ at the start of each frame
+    drainPendingData();
+
     ImGui::Text("Received Data (Click to focus for single-key sending)");
     ImGui::Separator();
 
@@ -453,33 +466,28 @@ void SerialApp::renderDataDisplay() {
         if (io.InputQueueCharacters.Size > 0) {
             for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
                 char c = io.InputQueueCharacters[i];
-                if (c >= 32 || c == '\n' || c == '\r' || c == '\t') { // Filter out control characters
+                if (c >= 32 || c == '\n' || c == '\r' || c == '\t') {
                     sendCommand(std::string(1, c));
                 }
             }
-            // Clear the input queue to prevent processing these characters elsewhere
             io.InputQueueCharacters.resize(0);
         }
     }
 
-    {
-        std::lock_guard<std::mutex> lock(dataMutex_);
-
-        // Use ImGui clipper for efficient rendering of large lists
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(receivedData_.size()));
-        while (clipper.Step()) {
-            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-                ImGui::TextUnformatted(receivedData_[i].c_str());
-            }
+    // No mutex needed — receivedData_ is only accessed from the render thread
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(receivedData_.size()));
+    while (clipper.Step()) {
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
+            ImGui::TextUnformatted(receivedData_[i].c_str());
         }
-
-        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-            ImGui::SetScrollHereY(1.0f);
-        }
-
-        textSelect_.update();
     }
+
+    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+        ImGui::SetScrollHereY(1.0f);
+    }
+
+    textSelect_.update();
 
     ImGui::EndChild();
 }
@@ -584,6 +592,7 @@ void SerialApp::renderTogglePanel() {
             toggleSendThread_ = std::thread(&SerialApp::toggleSendLoop, this);
         } else {
             toggleSendRunning_ = false;
+            toggleSendCv_.notify_all();
             if (toggleSendThread_.joinable()) {
                 toggleSendThread_.join();
             }
@@ -592,24 +601,34 @@ void SerialApp::renderTogglePanel() {
 }
 
 void SerialApp::onDataReceived(const std::string& data) {
-    std::lock_guard<std::mutex> lock(dataMutex_);
-    
-    // Log received data
+    // Log on receive thread (no UI lock needed)
     logData(data, true);
-    
-    // Apply filter if active
-    const auto& config = configManager_.getConfig();
-    if (config.filterActive && !config.filterString.empty()) {
-        if (data.find(config.filterString) == std::string::npos) {
-            return; // Skip this data
-        }
+
+    // Push to pending queue — minimal lock time
+    std::lock_guard<std::mutex> lock(pendingMutex_);
+    pendingData_.push(data);
+}
+
+void SerialApp::drainPendingData() {
+    // Swap the pending queue out under minimal lock
+    std::queue<std::string> local;
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        std::swap(local, pendingData_);
     }
-    
-    receivedData_.push_back(data);
-    
-    // Limit the number of stored lines
-    if (receivedData_.size() > MAX_DISPLAY_LINES) {
-        receivedData_.pop_front();
+
+    // Apply filter and move into receivedData_ — no lock needed, render thread only
+    const auto& config = configManager_.getConfig();
+    while (!local.empty()) {
+        std::string line = std::move(local.front());
+        local.pop();
+        if (config.filterActive && !config.filterString.empty()) {
+            if (line.find(config.filterString) == std::string::npos)
+                continue;
+        }
+        receivedData_.push_back(std::move(line));
+        if (receivedData_.size() > MAX_DISPLAY_LINES)
+            receivedData_.pop_front();
     }
 }
 
@@ -670,35 +689,47 @@ void SerialApp::toggleConnection() {
 
 void SerialApp::sendEveryLoop() {
     while (sendEveryRunning_) {
-        if (strlen(inputBuffer_) > 0) {
+        if (strlen(inputBuffer_) > 0)
             sendCommand(std::string(inputBuffer_));
-        }
-        
-        std::this_thread::sleep_for(std::chrono::seconds(sendEveryInterval_));
+
+        std::unique_lock<std::mutex> lk(sendEveryMutex_);
+        sendEveryCv_.wait_for(lk,
+            std::chrono::seconds(sendEveryInterval_),
+            [this] { return !sendEveryRunning_.load(); });
     }
 }
 
 void SerialApp::toggleSendLoop() {
     bool sendFirst = true;
-    
+
     while (toggleSendRunning_) {
+        int intervalSec;
         if (sendFirst) {
-            if (strlen(toggleCommand0_) > 0) {
+            if (strlen(toggleCommand0_) > 0)
                 sendCommand(std::string(toggleCommand0_));
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(toggleInterval0_));
+            intervalSec = toggleInterval0_;
         } else {
-            if (strlen(toggleCommand1_) > 0) {
+            if (strlen(toggleCommand1_) > 0)
                 sendCommand(std::string(toggleCommand1_));
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(toggleInterval1_));
+            intervalSec = toggleInterval1_;
         }
         sendFirst = !sendFirst;
+
+        std::unique_lock<std::mutex> lk(toggleSendMutex_);
+        toggleSendCv_.wait_for(lk,
+            std::chrono::seconds(intervalSec),
+            [this] { return !toggleSendRunning_.load(); });
     }
 }
 
 void SerialApp::clearDataDisplay() {
-    std::lock_guard<std::mutex> lock(dataMutex_);
+    // Clear pending queue under its own lock
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        std::queue<std::string> empty;
+        std::swap(pendingData_, empty);
+    }
+    // receivedData_ is render-thread only, no lock needed
     receivedData_.clear();
     textSelect_.clearSelection();
 }
@@ -848,26 +879,32 @@ void SerialApp::stopLogging() {
         if (timestampEnabled_) {
             stopMsg = getCurrentTimestamp() + " " + stopMsg;
         }
-        logFile_ << stopMsg << std::endl;
+        logFile_ << stopMsg << '\n';
         logFile_.flush();
+        logFlushCounter_ = 0;
         logFile_.close();
     }
 }
 
 void SerialApp::logData(const std::string& data, bool isReceived) {
-    if (logFile_.is_open() && loggingEnabled_) {
-        std::string prefix = isReceived ? "[RX] " : "[TX] ";
-        std::string logEntry = prefix + data;
-        
-        if (timestampEnabled_) {
-            logEntry = getCurrentTimestamp() + " " + logEntry;
-        }
-        
-        logFile_ << logEntry;
-        if (data.back() != '\n') {
-            logFile_ << std::endl;
-        }
+    if (!logFile_.is_open() || !loggingEnabled_) return;
+
+    std::string prefix = isReceived ? "[RX] " : "[TX] ";
+    std::string logEntry = prefix + data;
+
+    if (timestampEnabled_) {
+        logEntry = getCurrentTimestamp() + " " + logEntry;
+    }
+
+    logFile_ << logEntry;
+    if (data.back() != '\n') {
+        logFile_ << '\n';
+    }
+
+    // Flush every 50 lines instead of every line to avoid per-line disk I/O
+    if (++logFlushCounter_ >= 50) {
         logFile_.flush();
+        logFlushCounter_ = 0;
     }
 }
 

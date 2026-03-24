@@ -13,6 +13,8 @@
 #include <atomic>
 #include <mutex>
 #include <deque>
+#include <queue>
+#include <condition_variable>
 #include <fstream>
 
 class SerialApp {
@@ -38,6 +40,8 @@ private:
     char filterBuffer_[256] = "";
     std::deque<std::string> receivedData_;
     std::mutex dataMutex_;
+    std::queue<std::string> pendingData_;
+    std::mutex pendingMutex_;
     TextSelect textSelect_;
     
     // Splitter positions
@@ -56,11 +60,15 @@ private:
     int sendEveryInterval_ = 1;
     std::thread sendEveryThread_;
     std::atomic<bool> sendEveryRunning_{false};
-    
-    // Toggle send functionality  
+    std::condition_variable sendEveryCv_;
+    std::mutex sendEveryMutex_;
+
+    // Toggle send functionality
     bool toggleSendEnabled_ = false;
     std::thread toggleSendThread_;
     std::atomic<bool> toggleSendRunning_{false};
+    std::condition_variable toggleSendCv_;
+    std::mutex toggleSendMutex_;
     char toggleCommand0_[256] = "";
     char toggleCommand1_[256] = "";
     int toggleInterval0_ = 1;
@@ -77,12 +85,13 @@ private:
     char tempEditName_[64] = "";
     
     // Logging state
-    bool loggingEnabled_ = false;
+    bool loggingEnabled_ = true;
     bool timestampEnabled_ = true;
-    bool autoFilename_ = false;
+    bool autoFilename_ = true;
     char logFilePath_[512] = "com_log.txt";
     std::ofstream logFile_;
-    
+    int logFlushCounter_ = 0;
+
     // GUI methods
     void renderMainWindow();
     void renderConnectionPanel();
@@ -105,6 +114,7 @@ private:
     
     // Utility methods
     void clearDataDisplay();
+    void drainPendingData();
     void applyFilter();
     void loadConfiguration();
     void saveConfiguration();
