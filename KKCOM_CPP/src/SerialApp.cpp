@@ -19,7 +19,13 @@
 #include <commdlg.h>
 #endif
 
-SerialApp::SerialApp() : configManager_("config.json") {
+SerialApp::SerialApp() :
+    configManager_("config.json"),
+    textSelect_(
+        [this](std::size_t i) -> std::string_view { return receivedData_[i]; },
+        [this]() -> std::size_t { return receivedData_.size(); }
+    )
+{
     // Initialize buffers
     memset(inputBuffer_, 0, sizeof(inputBuffer_));
     memset(filterBuffer_, 0, sizeof(filterBuffer_));
@@ -438,10 +444,11 @@ void SerialApp::renderDataDisplay() {
     ImGui::Text("Received Data (Click to focus for single-key sending)");
     ImGui::Separator();
 
-    ImGui::BeginChild("DataScrolling", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::BeginChild("DataScrolling", ImVec2(0, 0), true,
+        ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove);
 
-    // If this window is focused, capture character input
-    if (ImGui::IsWindowFocused()) {
+    // If this window is focused and no text is selected, capture character input for single-key sending
+    if (ImGui::IsWindowFocused() && !textSelect_.hasSelection()) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.InputQueueCharacters.Size > 0) {
             for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
@@ -455,19 +462,23 @@ void SerialApp::renderDataDisplay() {
         }
     }
 
-    std::lock_guard<std::mutex> lock(dataMutex_);
+    {
+        std::lock_guard<std::mutex> lock(dataMutex_);
 
-    // Use ImGui clipper for efficient rendering of large lists
-    ImGuiListClipper clipper;
-    clipper.Begin(static_cast<int>(receivedData_.size()));
-    while (clipper.Step()) {
-        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-            ImGui::TextUnformatted(receivedData_[i].c_str());
+        // Use ImGui clipper for efficient rendering of large lists
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(receivedData_.size()));
+        while (clipper.Step()) {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
+                ImGui::TextUnformatted(receivedData_[i].c_str());
+            }
         }
-    }
 
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-        ImGui::SetScrollHereY(1.0f);
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+
+        textSelect_.update();
     }
 
     ImGui::EndChild();
@@ -689,6 +700,7 @@ void SerialApp::toggleSendLoop() {
 void SerialApp::clearDataDisplay() {
     std::lock_guard<std::mutex> lock(dataMutex_);
     receivedData_.clear();
+    textSelect_.clearSelection();
 }
 
 void SerialApp::applyFilter() {

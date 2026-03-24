@@ -58,6 +58,7 @@ endif()
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs
 )
 
 if(EXISTS "${IMGUI_DIR}")
@@ -70,6 +71,7 @@ endif()
 # Source files (exclude test files)
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test_serial.cpp")
+list(APPEND SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/libs/textselect.cpp")
 
 # Windows resource file for icon
 if(WIN32)

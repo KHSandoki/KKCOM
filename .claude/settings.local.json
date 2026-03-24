@@ -19,7 +19,8 @@
       "Bash(./build_debug.bat)",
       "Bash(cmd.exe /c \"build_debug.bat\")",
       "Bash(cmd.exe /c \"build_release.bat\")",
-      "Bash(powershell -command \"Get-Content ''C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\2019\\\\BuildTools\\\\Common7\\\\Tools\\\\VsDevCmd.bat'' -TotalCount 200 | Select-Object -Skip 100\")"
+      "Bash(powershell -command \"Get-Content ''C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\2019\\\\BuildTools\\\\Common7\\\\Tools\\\\VsDevCmd.bat'' -TotalCount 200 | Select-Object -Skip 100\")",
+      "WebSearch"
     ],
     "deny": []
   }

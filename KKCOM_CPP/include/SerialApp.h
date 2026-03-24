@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "ResourceManager.h"
 #include "version.h"
+#include "textselect.hpp"
 #include <imgui.h>
 #include <GLFW/glfw3.h>
 #include <string>
@@ -37,6 +38,7 @@ private:
     char filterBuffer_[256] = "";
     std::deque<std::string> receivedData_;
     std::mutex dataMutex_;
+    TextSelect textSelect_;
     
     // Splitter positions
     float leftPanelSplitterPos_ = 0.7f;  // Position for data display vs input panel
