@@ -78,7 +78,8 @@ bool SerialApp::initialize() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     
-    GLFWwindow* window = glfwCreateWindow(1200, 800, "KKCOM - C++ Edition", nullptr, nullptr);
+    std::string mainWindowTitle = std::string(KKCOM_PRODUCT_NAME) + " v" + KKCOM_VERSION_STRING_FULL;
+    GLFWwindow* window = glfwCreateWindow(1200, 800, mainWindowTitle.c_str(), nullptr, nullptr);
     if (!window) {
         DEBUG_ERROR("Failed to create GLFW window");
         glfwTerminate();
@@ -457,6 +458,16 @@ void SerialApp::renderDataDisplay() {
     ImGui::Text("Received Data (Click to focus for single-key sending)");
     ImGui::Separator();
 
+    // Apply scroll compensation BEFORE BeginChild so it takes effect in this frame's clipper.
+    // SetNextWindowScroll is the only way to update scroll position same-frame in ImGui.
+    if (!autoScroll_ && itemsRemovedFromFront_ > 0) {
+        float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+        float targetScroll = prevScrollY_ - itemsRemovedFromFront_ * lineHeight;
+        if (targetScroll < 0.0f) targetScroll = 0.0f;
+        ImGui::SetNextWindowScroll(ImVec2(-1.0f, targetScroll));
+    }
+    itemsRemovedFromFront_ = 0;
+
     ImGui::BeginChild("DataScrolling", ImVec2(0, 0), true,
         ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove);
 
@@ -474,7 +485,7 @@ void SerialApp::renderDataDisplay() {
         }
     }
 
-    // No mutex needed — receivedData_ is only accessed from the render thread
+    // No mutex needed — receivedData_ and partialLine_ are render-thread only
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(receivedData_.size()));
     while (clipper.Step()) {
@@ -483,11 +494,32 @@ void SerialApp::renderDataDisplay() {
         }
     }
 
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-        ImGui::SetScrollHereY(1.0f);
+    // Show incomplete line (no \n yet) so data is visible without waiting for newline
+    if (!partialLine_.empty()) {
+        ImGui::TextUnformatted(partialLine_.c_str());
     }
 
-    textSelect_.update();
+    // Smart auto-scroll: disable when user scrolls up, re-enable when back at bottom
+    if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel > 0.0f) {
+        autoScroll_ = false;
+    }
+    float scrollY    = ImGui::GetScrollY();
+    float scrollMaxY = ImGui::GetScrollMaxY();
+    if (scrollMaxY > 0.0f && scrollY >= scrollMaxY - 1.0f) {
+        autoScroll_ = true;
+    }
+    if (autoScroll_) {
+        ImGui::SetScrollHereY(1.0f);
+        prevScrollY_ = scrollMaxY;
+    } else {
+        prevScrollY_ = scrollY;
+    }
+
+    // Only run TextSelect (which rebuilds a full-list vector) when the user
+    // is actually interacting with the window — not every frame unconditionally.
+    if (ImGui::IsWindowHovered() || ImGui::IsWindowFocused() || textSelect_.hasSelection()) {
+        textSelect_.update();
+    }
 
     ImGui::EndChild();
 }
@@ -617,18 +649,48 @@ void SerialApp::drainPendingData() {
         std::swap(local, pendingData_);
     }
 
-    // Apply filter and move into receivedData_ — no lock needed, render thread only
+    // Split raw chunks into lines, maintaining partialLine_ for incomplete data.
+    // No lock needed — receivedData_ and partialLine_ are render-thread only.
     const auto& config = configManager_.getConfig();
-    while (!local.empty()) {
-        std::string line = std::move(local.front());
-        local.pop();
+    static const size_t MAX_PARTIAL_LINE = 4096;
+
+    auto pushLine = [&](std::string line) {
         if (config.filterActive && !config.filterString.empty()) {
             if (line.find(config.filterString) == std::string::npos)
-                continue;
+                return;
         }
         receivedData_.push_back(std::move(line));
-        if (receivedData_.size() > MAX_DISPLAY_LINES)
+        if (receivedData_.size() > MAX_DISPLAY_LINES) {
             receivedData_.pop_front();
+            ++itemsRemovedFromFront_;
+        }
+    };
+
+    while (!local.empty()) {
+        partialLine_ += std::move(local.front());
+        local.pop();
+
+        // Scan for newlines using an offset — avoids O(N^2) erase-in-loop.
+        // All found lines are extracted in one pass; a single erase follows.
+        size_t searchStart = 0;
+        size_t pos;
+        while ((pos = partialLine_.find('\n', searchStart)) != std::string::npos) {
+            std::string line(partialLine_, searchStart, pos - searchStart);
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            line += '\n';
+            searchStart = pos + 1;
+            pushLine(std::move(line));
+        }
+        // Remove all consumed bytes in one shot
+        if (searchStart > 0)
+            partialLine_.erase(0, searchStart);
+
+        // Cap partial line to avoid unbounded growth on no-newline streams
+        while (partialLine_.size() > MAX_PARTIAL_LINE) {
+            pushLine(partialLine_.substr(0, MAX_PARTIAL_LINE));
+            partialLine_.erase(0, MAX_PARTIAL_LINE);
+        }
     }
 }
 
@@ -729,8 +791,9 @@ void SerialApp::clearDataDisplay() {
         std::queue<std::string> empty;
         std::swap(pendingData_, empty);
     }
-    // receivedData_ is render-thread only, no lock needed
+    // receivedData_ and partialLine_ are render-thread only, no lock needed
     receivedData_.clear();
+    partialLine_.clear();
     textSelect_.clearSelection();
 }
 

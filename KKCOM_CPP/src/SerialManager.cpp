@@ -231,55 +231,26 @@ void SerialManager::setDataCallback(DataCallback callback) {
 
 void SerialManager::receiveLoop() {
     char buffer[1024];
-    std::string lineBuffer;
-    
+
     while (receiving_) {
 #ifdef _WIN32
         DWORD bytesRead;
         if (ReadFile(serialHandle_, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0) {
-            buffer[bytesRead] = '\0';
-            lineBuffer += buffer;
-            
-            size_t pos;
-            while ((pos = lineBuffer.find('\n')) != std::string::npos) {
-                std::string line = lineBuffer.substr(0, pos);
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                line += '\n';
-                
-                std::lock_guard<std::mutex> lock(callbackMutex_);
-                if (dataCallback_) {
-                    dataCallback_(line);
-                }
-                
-                lineBuffer.erase(0, pos + 1);
+            std::lock_guard<std::mutex> lock(callbackMutex_);
+            if (dataCallback_) {
+                dataCallback_(std::string(buffer, bytesRead));
             }
         }
 #else
         ssize_t bytesRead = read(serialFd_, buffer, sizeof(buffer) - 1);
         if (bytesRead > 0) {
-            buffer[bytesRead] = '\0';
-            lineBuffer += buffer;
-            
-            size_t pos;
-            while ((pos = lineBuffer.find('\n')) != std::string::npos) {
-                std::string line = lineBuffer.substr(0, pos);
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                line += '\n';
-                
-                std::lock_guard<std::mutex> lock(callbackMutex_);
-                if (dataCallback_) {
-                    dataCallback_(line);
-                }
-                
-                lineBuffer.erase(0, pos + 1);
+            std::lock_guard<std::mutex> lock(callbackMutex_);
+            if (dataCallback_) {
+                dataCallback_(std::string(buffer, bytesRead));
             }
         }
 #endif
-        
+
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }

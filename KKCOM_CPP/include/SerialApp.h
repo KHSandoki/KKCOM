@@ -39,10 +39,14 @@ private:
     char inputBuffer_[256] = "";
     char filterBuffer_[256] = "";
     std::deque<std::string> receivedData_;
+    std::string partialLine_;           // incomplete line (no \n yet), displayed live
     std::mutex dataMutex_;
     std::queue<std::string> pendingData_;
     std::mutex pendingMutex_;
     TextSelect textSelect_;
+    bool autoScroll_ = true;
+    int itemsRemovedFromFront_ = 0;
+    float prevScrollY_ = 0.0f;
     
     // Splitter positions
     float leftPanelSplitterPos_ = 0.7f;  // Position for data display vs input panel
