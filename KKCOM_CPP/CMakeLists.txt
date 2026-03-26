@@ -44,10 +44,11 @@ endif()
 # Add ImGui (we'll need to download it manually or use a simpler approach)
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/imgui")
 if(EXISTS "${IMGUI_DIR}")
-    file(GLOB IMGUI_SOURCES 
+    file(GLOB IMGUI_SOURCES
         "${IMGUI_DIR}/*.cpp"
         "${IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
         "${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp"
+        "${IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp"
     )
     message(STATUS "Found ImGui sources")
 else()

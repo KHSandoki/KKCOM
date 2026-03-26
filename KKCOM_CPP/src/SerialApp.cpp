@@ -4,6 +4,7 @@
 #include "icon_data.h"
 #include "launch_data.h"
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <GLFW/glfw3.h>
@@ -29,17 +30,10 @@ SerialApp::SerialApp() :
     // Initialize buffers
     memset(inputBuffer_, 0, sizeof(inputBuffer_));
     memset(filterBuffer_, 0, sizeof(filterBuffer_));
-    memset(extCommands_, 0, sizeof(extCommands_));
-    memset(extNames_, 0, sizeof(extNames_));
     memset(toggleCommand0_, 0, sizeof(toggleCommand0_));
     memset(toggleCommand1_, 0, sizeof(toggleCommand1_));
-    
-    // Initialize EXT command names with default values
-    for (int tab = 0; tab < 3; ++tab) {
-        for (int i = 0; i < EXT_COMMAND_COUNT; ++i) {
-            snprintf(extNames_[tab][i], sizeof(extNames_[tab][i]), "%d", i);
-        }
-    }
+    memset(tempEditName_, 0, sizeof(tempEditName_));
+    memset(tempGroupName_, 0, sizeof(tempGroupName_));
 }
 
 SerialApp::~SerialApp() {
@@ -551,45 +545,117 @@ void SerialApp::renderExtTabs() {
 }
 
 void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
+    auto& groups = getTabGroups(tabIndex);
+
     ImGui::BeginChild("ExtCommands", ImVec2(0, 0), false);
-    
-    ImGui::Columns(2, "ExtColumns", true);
-    ImGui::Text("Command");
-    ImGui::NextColumn();
-    ImGui::Text("Send (Double-click to edit)");
-    ImGui::NextColumn();
+
+    if (ImGui::Button("+ Add Group")) {
+        showAddGroupPopup_ = true;
+        editTabIndex_ = tabIndex;
+        memset(tempGroupName_, 0, sizeof(tempGroupName_));
+        strncpy(tempGroupName_, "New Group", sizeof(tempGroupName_) - 1);
+    }
+
     ImGui::Separator();
-    
-    for (int i = 0; i < EXT_COMMAND_COUNT; ++i) {
-        ImGui::PushID(i);
-        
-        // Command input
-        ImGui::PushItemWidth(-1);
-        ImGui::InputText("##Command", extCommands_[tabIndex][i], sizeof(extCommands_[tabIndex][i]));
-        ImGui::PopItemWidth();
-        ImGui::NextColumn();
-        
-        // Send button with double-click edit
-        if (ImGui::Button(extNames_[tabIndex][i])) {
-            // Single-click: send command
-            if (strlen(extCommands_[tabIndex][i]) > 0) {
-                sendCommand(std::string(extCommands_[tabIndex][i]));
+    ImGui::Spacing();
+
+    int deleteGroupIdx = -1;
+
+    for (int gi = 0; gi < (int)groups.size(); ++gi) {
+        auto& group = groups[gi];
+        ImGui::PushID(gi);
+
+        bool open = ImGui::CollapsingHeader(group.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            contextTabIndex_   = tabIndex;
+            contextGroupIndex_ = gi;
+            ImGui::OpenPopup("GroupCtxMenu");
+        }
+
+        if (ImGui::BeginPopup("GroupCtxMenu")) {
+            if (ImGui::MenuItem("Rename")) {
+                showRenameGroupPopup_ = true;
+                editTabIndex_   = contextTabIndex_;
+                editGroupIndex_ = contextGroupIndex_;
+                memset(tempGroupName_, 0, sizeof(tempGroupName_));
+                strncpy(tempGroupName_, groups[contextGroupIndex_].name.c_str(),
+                        sizeof(tempGroupName_) - 1);
             }
+            if (ImGui::MenuItem("Add Command")) {
+                groups[contextGroupIndex_].commands.push_back(ExtCommand("Button", ""));
+            }
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            if (ImGui::MenuItem("Delete Group")) {
+                deleteGroupIdx = contextGroupIndex_;
+            }
+            ImGui::PopStyleColor();
+            ImGui::EndPopup();
         }
-        
-        // Check for double-click on the button
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            // Double-click: open edit window
-            showEditWindow_ = true;
-            editTabIndex_ = tabIndex;
-            editCommandIndex_ = i;
-            strcpy(tempEditName_, extNames_[tabIndex][i]);
+
+        if (open) {
+            int deleteCmd = -1;
+
+            ImGui::Columns(2, "CmdCols", true);
+            ImGui::TextDisabled("Command");
+            ImGui::NextColumn();
+            ImGui::TextDisabled("Send  (double-click = rename,  x = delete)");
+            ImGui::NextColumn();
+            ImGui::Separator();
+
+            for (int ci = 0; ci < (int)group.commands.size(); ++ci) {
+                auto& cmd = group.commands[ci];
+                ImGui::PushID(ci);
+
+                ImGui::PushItemWidth(-1);
+                ImGui::InputText("##Cmd", &cmd.command);
+                ImGui::PopItemWidth();
+                ImGui::NextColumn();
+
+                // Send button — single-click sends, double-click opens rename
+                if (ImGui::Button(cmd.name.c_str())) {
+                    if (!cmd.command.empty())
+                        sendCommand(cmd.command);
+                }
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                    showEditWindow_   = true;
+                    editTabIndex_     = tabIndex;
+                    editGroupIndex_   = gi;
+                    editCommandIndex_ = ci;
+                    memset(tempEditName_, 0, sizeof(tempEditName_));
+                    strncpy(tempEditName_, cmd.name.c_str(), sizeof(tempEditName_) - 1);
+                }
+
+                // Delete button
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
+                if (ImGui::SmallButton("x"))
+                    deleteCmd = ci;
+                ImGui::PopStyleColor(2);
+
+                ImGui::NextColumn();
+                ImGui::PopID();
+            }
+
+            ImGui::Columns(1);
+
+            if (deleteCmd >= 0)
+                group.commands.erase(group.commands.begin() + deleteCmd);
+
+            if (ImGui::Button("+ Add Command"))
+                group.commands.push_back(ExtCommand("Button", ""));
+
+            ImGui::Spacing();
         }
-        ImGui::NextColumn();
+
         ImGui::PopID();
     }
-    
-    ImGui::Columns(1);
+
+    if (deleteGroupIdx >= 0 && deleteGroupIdx < (int)groups.size())
+        groups.erase(groups.begin() + deleteGroupIdx);
+
     ImGui::EndChild();
 }
 
@@ -695,23 +761,67 @@ void SerialApp::drainPendingData() {
 }
 
 void SerialApp::renderEditWindow() {
+    // --- Rename command button ---
     if (showEditWindow_) {
         ImGui::OpenPopup("Edit Button Name");
-        showEditWindow_ = false; // Only open once
+        showEditWindow_ = false;
     }
-    
     if (ImGui::BeginPopupModal("Edit Button Name", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Enter button name:");
-        ImGui::InputText("##Name", tempEditName_, sizeof(tempEditName_));
-        
+        ImGui::Text("Button name:");
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputText("##BtnName", tempEditName_, sizeof(tempEditName_));
         if (ImGui::Button("OK")) {
-            strcpy(extNames_[editTabIndex_][editCommandIndex_], tempEditName_);
+            auto& groups = getTabGroups(editTabIndex_);
+            if (editGroupIndex_ < (int)groups.size()) {
+                auto& grp = groups[editGroupIndex_];
+                if (editCommandIndex_ < (int)grp.commands.size())
+                    grp.commands[editCommandIndex_].name = std::string(tempEditName_);
+            }
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // --- Add group ---
+    if (showAddGroupPopup_) {
+        ImGui::OpenPopup("Add Group");
+        showAddGroupPopup_ = false;
+    }
+    if (ImGui::BeginPopupModal("Add Group", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Group name:");
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputText("##NewGroupName", tempGroupName_, sizeof(tempGroupName_));
+        if (ImGui::Button("OK")) {
+            getTabGroups(editTabIndex_).push_back(ExtGroup(std::string(tempGroupName_)));
             ImGui::CloseCurrentPopup();
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // --- Rename group ---
+    if (showRenameGroupPopup_) {
+        ImGui::OpenPopup("Rename Group");
+        showRenameGroupPopup_ = false;
+    }
+    if (ImGui::BeginPopupModal("Rename Group", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("New name:");
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputText("##RenameGroupName", tempGroupName_, sizeof(tempGroupName_));
+        if (ImGui::Button("OK")) {
+            auto& groups = getTabGroups(editTabIndex_);
+            if (editGroupIndex_ < (int)groups.size())
+                groups[editGroupIndex_].name = std::string(tempGroupName_);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -806,27 +916,16 @@ void SerialApp::applyFilter() {
 void SerialApp::loadConfiguration() {
     if (configManager_.loadConfig()) {
         const auto& config = configManager_.getConfig();
-        
-        // Load EXT commands
-        for (int tab = 0; tab < 3; ++tab) {
-            const auto* commands = (tab == 0) ? &config.ext1Commands : 
-                                  (tab == 1) ? &config.ext2Commands : &config.ext3Commands;
-            
-            for (int i = 0; i < EXT_COMMAND_COUNT && i < static_cast<int>(commands->size()); ++i) {
-                strcpy(extCommands_[tab][i], (*commands)[i].command.c_str());
-                strcpy(extNames_[tab][i], (*commands)[i].name.c_str());
-            }
-        }
-        
+
         // Load toggle commands
-        strcpy(toggleCommand0_, config.toggleCommand0.c_str());
-        strcpy(toggleCommand1_, config.toggleCommand1.c_str());
+        strncpy(toggleCommand0_, config.toggleCommand0.c_str(), sizeof(toggleCommand0_) - 1);
+        strncpy(toggleCommand1_, config.toggleCommand1.c_str(), sizeof(toggleCommand1_) - 1);
         toggleInterval0_ = config.toggleInterval0;
         toggleInterval1_ = config.toggleInterval1;
-        
+
         // Load filter
-        strcpy(filterBuffer_, config.filterString.c_str());
-        
+        strncpy(filterBuffer_, config.filterString.c_str(), sizeof(filterBuffer_) - 1);
+
         // Set last port if available
         if (!config.lastPort.empty()) {
             for (size_t i = 0; i < availablePorts_.size(); ++i) {
@@ -836,7 +935,7 @@ void SerialApp::loadConfiguration() {
                 }
             }
         }
-        
+
         // Set last baud rate
         auto it = std::find(baudRates_.begin(), baudRates_.end(), config.lastBaudRate);
         if (it != baudRates_.end()) {
@@ -847,28 +946,26 @@ void SerialApp::loadConfiguration() {
 
 void SerialApp::saveConfiguration() {
     auto& config = configManager_.getConfig();
-    
-    // Save EXT commands
-    for (int tab = 0; tab < 3; ++tab) {
-        auto* commands = (tab == 0) ? &config.ext1Commands : 
-                        (tab == 1) ? &config.ext2Commands : &config.ext3Commands;
-        
-        for (int i = 0; i < EXT_COMMAND_COUNT; ++i) {
-            (*commands)[i].command = std::string(extCommands_[tab][i]);
-            (*commands)[i].name = std::string(extNames_[tab][i]);
-        }
-    }
-    
+
+    // EXT groups are edited directly in config — no sync needed
+
     // Save toggle commands
     config.toggleCommand0 = std::string(toggleCommand0_);
     config.toggleCommand1 = std::string(toggleCommand1_);
     config.toggleInterval0 = toggleInterval0_;
     config.toggleInterval1 = toggleInterval1_;
-    
+
     // Save filter
     config.filterString = std::string(filterBuffer_);
-    
+
     configManager_.saveConfig();
+}
+
+std::vector<ExtGroup>& SerialApp::getTabGroups(int tabIndex) {
+    auto& config = configManager_.getConfig();
+    if (tabIndex == 0) return config.ext1Groups;
+    if (tabIndex == 1) return config.ext2Groups;
+    return config.ext3Groups;
 }
 
 bool SerialApp::splitterV(const char* str_id, float* size1, float* size2, float min_size1, float min_size2) {

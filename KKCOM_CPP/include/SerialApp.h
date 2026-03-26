@@ -21,19 +21,19 @@ class SerialApp {
 public:
     SerialApp();
     ~SerialApp();
-    
+
     bool initialize();
     void run();
     void shutdown();
-    
+
     // Static method for showing splash screen
     static void showSplashScreen();
-    
+
 private:
     // Core components
     SerialManager serialManager_;
     ConfigManager configManager_;
-    
+
     // GUI state
     bool showDemo_ = false;
     char inputBuffer_[256] = "";
@@ -47,18 +47,18 @@ private:
     bool autoScroll_ = true;
     int itemsRemovedFromFront_ = 0;
     float prevScrollY_ = 0.0f;
-    
+
     // Splitter positions
     float leftPanelSplitterPos_ = 0.7f;  // Position for data display vs input panel
     float connectionPanelHeight_ = 200.0f;  // Height of connection panel
-    
+
     // Connection state
     std::vector<SerialManager::PortInfo> availablePorts_;
     int selectedPortIndex_ = 0;
     int selectedBaudRate_ = 7; // Index for 115200
     std::vector<int> baudRates_ = {300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 921600};
     bool connected_ = false;
-    
+
     // Send every functionality
     bool sendEveryEnabled_ = false;
     int sendEveryInterval_ = 1;
@@ -77,17 +77,21 @@ private:
     char toggleCommand1_[256] = "";
     int toggleInterval0_ = 1;
     int toggleInterval1_ = 1;
-    
-    // EXT commands
-    char extCommands_[3][100][256]; // 3 tabs, 100 commands each
-    char extNames_[3][100][64];     // Command names/labels
-    
-    // Edit state
+
+    // Edit state for command button name
     bool showEditWindow_ = false;
     int editTabIndex_ = 0;
+    int editGroupIndex_ = 0;
     int editCommandIndex_ = 0;
     char tempEditName_[64] = "";
-    
+
+    // Group management state
+    bool showAddGroupPopup_ = false;
+    bool showRenameGroupPopup_ = false;
+    int contextTabIndex_ = -1;
+    int contextGroupIndex_ = -1;
+    char tempGroupName_[64] = "";
+
     // Logging state
     bool loggingEnabled_ = true;
     bool timestampEnabled_ = true;
@@ -105,17 +109,17 @@ private:
     void renderExtTab(int tabIndex, const char* tabName);
     void renderTogglePanel();
     void renderEditWindow();
-    
+
     // Serial communication
     void onDataReceived(const std::string& data);
     void sendCommand(const std::string& command);
     void refreshPorts();
     void toggleConnection();
-    
+
     // Threading methods
     void sendEveryLoop();
     void toggleSendLoop();
-    
+
     // Utility methods
     void clearDataDisplay();
     void drainPendingData();
@@ -124,7 +128,8 @@ private:
     void saveConfiguration();
     bool splitterV(const char* str_id, float* size1, float* size2, float min_size1, float min_size2);
     void setWindowIcon(GLFWwindow* window);
-    
+    std::vector<ExtGroup>& getTabGroups(int tabIndex);
+
     // Logging methods
     void startLogging();
     void stopLogging();
@@ -132,8 +137,7 @@ private:
     std::string getCurrentTimestamp();
     std::string generateAutoFilename();
     void openFileDialog();
-    
+
     // Constants
     static const int MAX_DISPLAY_LINES = 1000;
-    static const int EXT_COMMAND_COUNT = 100;
 };
