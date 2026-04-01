@@ -7,23 +7,31 @@
 struct ExtCommand {
     std::string name;
     std::string command;
+    float color[4];
 
-    ExtCommand() = default;
-    ExtCommand(const std::string& n, const std::string& c) : name(n), command(c) {}
+    ExtCommand() : name(">"), command("") { color[0]=0.0f; color[1]=0.0f; color[2]=0.0f; color[3]=0.0f; }
+    ExtCommand(const std::string& n, const std::string& c) : name(n), command(c) {
+        color[0]=0.0f; color[1]=0.0f; color[2]=0.0f; color[3]=0.0f;
+    }
 };
 
 struct ExtGroup {
     std::string name;
     std::vector<ExtCommand> commands;
+    float color[4];
 
-    ExtGroup() = default;
-    ExtGroup(const std::string& n) : name(n) {}
+    ExtGroup() : name("") { color[0]=0.0f; color[1]=0.0f; color[2]=0.0f; color[3]=0.0f; }
+    ExtGroup(const std::string& n) : name(n) { color[0]=0.0f; color[1]=0.0f; color[2]=0.0f; color[3]=0.0f; }
 };
 
 struct AppConfig {
     std::vector<ExtGroup> ext1Groups;
     std::vector<ExtGroup> ext2Groups;
     std::vector<ExtGroup> ext3Groups;
+
+    std::vector<ExtCommand> ext1PinnedCmds;
+    std::vector<ExtCommand> ext2PinnedCmds;
+    std::vector<ExtCommand> ext3PinnedCmds;
 
     std::string toggleCommand0;
     std::string toggleCommand1;

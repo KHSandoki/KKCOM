@@ -33,7 +33,10 @@ SerialApp::SerialApp() :
     memset(toggleCommand0_, 0, sizeof(toggleCommand0_));
     memset(toggleCommand1_, 0, sizeof(toggleCommand1_));
     memset(tempEditName_, 0, sizeof(tempEditName_));
+    memset(tempEditCmd_, 0, sizeof(tempEditCmd_));
     memset(tempGroupName_, 0, sizeof(tempGroupName_));
+    memset(tempPinnedName_, 0, sizeof(tempPinnedName_));
+    memset(tempPinnedCmd_, 0, sizeof(tempPinnedCmd_));
 }
 
 SerialApp::~SerialApp() {
@@ -340,36 +343,41 @@ void SerialApp::renderMainWindow() {
 }
 
 void SerialApp::renderConnectionPanel() {
-    ImGui::Text("Connection Settings");
-    ImGui::Separator();
-    
-    // Connection button
+    // Connection button (full width, no title)
     ImVec4 buttonColor = connected_ ? ImVec4(1.0f, 0.2f, 0.2f, 1.0f) : ImVec4(0.1f, 0.7f, 0.1f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
     if (ImGui::Button(connected_ ? "Disconnect" : "Connect", ImVec2(-1, 40))) {
         toggleConnection();
     }
     ImGui::PopStyleColor();
-    
-    // Port selection
-    ImGui::Text("COM Port:");
-    ImGui::SameLine();
-    if (ImGui::Button("Refresh")) {
-        refreshPorts();
-    }
-    
+
+    // COM port, refresh button, and baud rate on one line
+    float avail = ImGui::GetContentRegionAvail().x;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float refreshW = 28.0f;
+    float comboW = (avail - refreshW - spacing * 2) * 0.55f;
+    float baudW  = avail - comboW - refreshW - spacing * 2;
+
+    ImGui::PushItemWidth(comboW);
     if (!availablePorts_.empty()) {
         std::vector<const char*> portCStrings;
         for (const auto& port : availablePorts_) {
             portCStrings.push_back(port.deviceName.c_str());
         }
         ImGui::Combo("##Port", &selectedPortIndex_, portCStrings.data(), static_cast<int>(portCStrings.size()));
+    } else {
+        ImGui::TextDisabled("(none)");
     }
-    
-    // Baud rate selection
-    ImGui::Text("Baud Rate:");
-    const char* baudRateStrings[] = {"300", "600", "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "921600"};
+    ImGui::PopItemWidth();
+
+    ImGui::SameLine();
+    if (ImGui::Button("R##Ref")) { refreshPorts(); }
+    ImGui::SameLine();
+
+    ImGui::PushItemWidth(baudW);
+    const char* baudRateStrings[] = {"300","600","1200","2400","4800","9600","19200","38400","57600","115200","921600"};
     ImGui::Combo("##BaudRate", &selectedBaudRate_, baudRateStrings, IM_ARRAYSIZE(baudRateStrings));
+    ImGui::PopItemWidth();
 }
 
 void SerialApp::renderInputPanel() {
@@ -546,8 +554,70 @@ void SerialApp::renderExtTabs() {
 
 void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
     auto& groups = getTabGroups(tabIndex);
+    auto& pinned = getTabPinnedCmds(tabIndex);
 
     ImGui::BeginChild("ExtCommands", ImVec2(0, 0), false);
+
+    // --- Pinned quick-commands bar ---
+    ImGui::PushID("PinnedBar");
+    for (int pi = 0; pi < (int)pinned.size(); ++pi) {
+        auto& pc = pinned[pi];
+        ImGui::PushID(pi);
+        if (pi > 0) ImGui::SameLine();
+
+        bool hasColor = pc.color[3] > 0.01f;
+        if (hasColor) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(pc.color[0], pc.color[1], pc.color[2], pc.color[3]));
+            float luma = 0.2126f*pc.color[0] + 0.7152f*pc.color[1] + 0.0722f*pc.color[2];
+            ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
+        }
+        std::string plabel = pc.name.empty() ? (pc.command.empty() ? "?" : pc.command) : pc.name;
+        if (ImGui::Button(plabel.c_str()) && !pc.command.empty())
+            sendCommand(pc.command);
+        if (hasColor) ImGui::PopStyleColor(2);
+
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            contextPinnedTabIndex_ = tabIndex;
+            contextPinnedIndex_    = pi;
+            ImGui::OpenPopup("PinnedCtxMenu");
+        }
+        if (ImGui::BeginPopup("PinnedCtxMenu")) {
+            if (ImGui::MenuItem("Edit")) {
+                auto& p2 = getTabPinnedCmds(contextPinnedTabIndex_)[contextPinnedIndex_];
+                pinnedEditTabIndex_ = contextPinnedTabIndex_;
+                pinnedEditCmdIndex_ = contextPinnedIndex_;
+                memset(tempPinnedName_, 0, sizeof(tempPinnedName_));
+                strncpy(tempPinnedName_, p2.name.c_str(), sizeof(tempPinnedName_)-1);
+                memset(tempPinnedCmd_, 0, sizeof(tempPinnedCmd_));
+                strncpy(tempPinnedCmd_, p2.command.c_str(), sizeof(tempPinnedCmd_)-1);
+                memcpy(tempPinnedColor_, p2.color, sizeof(float)*4);
+                showPinnedEditPopup_ = true;
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            if (ImGui::MenuItem("Delete")) {
+                auto& pv = getTabPinnedCmds(contextPinnedTabIndex_);
+                if (contextPinnedIndex_ < (int)pv.size())
+                    pv.erase(pv.begin() + contextPinnedIndex_);
+            }
+            ImGui::PopStyleColor();
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
+    }
+    if (!pinned.empty()) ImGui::SameLine();
+    if (ImGui::SmallButton("+##AddPinned")) {
+        pinnedEditTabIndex_ = tabIndex;
+        pinnedEditCmdIndex_ = -1;
+        memset(tempPinnedName_, 0, sizeof(tempPinnedName_));
+        memset(tempPinnedCmd_,  0, sizeof(tempPinnedCmd_));
+        tempPinnedColor_[0]=0.26f; tempPinnedColor_[1]=0.59f;
+        tempPinnedColor_[2]=0.98f; tempPinnedColor_[3]=0.80f;
+        showPinnedEditPopup_ = true;
+    }
+    ImGui::PopID(); // PinnedBar
+
+    ImGui::Separator();
+    ImGui::Spacing();
 
     if (ImGui::Button("+ Add Group")) {
         showAddGroupPopup_ = true;
@@ -565,7 +635,17 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
         auto& group = groups[gi];
         ImGui::PushID(gi);
 
+        bool hasGroupColor = group.color[3] > 0.01f;
+        if (hasGroupColor) {
+            ImVec4 hc(group.color[0], group.color[1], group.color[2], group.color[3]);
+            ImGui::PushStyleColor(ImGuiCol_Header,        hc);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(hc.x*1.15f, hc.y*1.15f, hc.z*1.15f, hc.w));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(hc.x*0.85f, hc.y*0.85f, hc.z*0.85f, hc.w));
+            float luma = 0.2126f*hc.x + 0.7152f*hc.y + 0.0722f*hc.z;
+            ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
+        }
         bool open = ImGui::CollapsingHeader(group.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        if (hasGroupColor) ImGui::PopStyleColor(4);
 
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
             contextTabIndex_   = tabIndex;
@@ -582,8 +662,14 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
                 strncpy(tempGroupName_, groups[contextGroupIndex_].name.c_str(),
                         sizeof(tempGroupName_) - 1);
             }
+            if (ImGui::MenuItem("Change Color")) {
+                editTabIndex_   = contextTabIndex_;
+                editGroupIndex_ = contextGroupIndex_;
+                memcpy(tempGroupColor_, groups[contextGroupIndex_].color, sizeof(float)*4);
+                showGroupColorPopup_ = true;
+            }
             if (ImGui::MenuItem("Add Command")) {
-                groups[contextGroupIndex_].commands.push_back(ExtCommand("Button", ""));
+                groups[contextGroupIndex_].commands.push_back(ExtCommand(">", ""));
             }
             ImGui::Separator();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
@@ -596,11 +682,15 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
 
         if (open) {
             int deleteCmd = -1;
+            int dragSrc = -1, dragDst = -1;
 
-            ImGui::Columns(2, "CmdCols", true);
+            ImGui::Columns(3, "CmdCols", true);
+            ImGui::SetColumnWidth(0, 30.0f);
+            ImGui::TextDisabled(" ");
+            ImGui::NextColumn();
             ImGui::TextDisabled("Command");
             ImGui::NextColumn();
-            ImGui::TextDisabled("Send  (double-click = rename,  x = delete)");
+            ImGui::TextDisabled("Send  (right-click = edit)");
             ImGui::NextColumn();
             ImGui::Separator();
 
@@ -608,23 +698,73 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
                 auto& cmd = group.commands[ci];
                 ImGui::PushID(ci);
 
+                // Drag handle column
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
+                ImGui::SmallButton("=");
+                ImGui::PopStyleColor(2);
+
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                    ImGui::SetDragDropPayload("CMD_REORDER", &ci, sizeof(int));
+                    ImGui::Text("Move: %s", cmd.name.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                        dragSrc = *(const int*)payload->Data;
+                        dragDst = ci;
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::NextColumn();
+
+                // Command input column
                 ImGui::PushItemWidth(-1);
                 ImGui::InputText("##Cmd", &cmd.command);
                 ImGui::PopItemWidth();
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                        dragSrc = *(const int*)payload->Data;
+                        dragDst = ci;
+                    }
+                    ImGui::EndDragDropTarget();
+                }
                 ImGui::NextColumn();
 
-                // Send button — single-click sends, double-click opens rename
-                if (ImGui::Button(cmd.name.c_str())) {
-                    if (!cmd.command.empty())
-                        sendCommand(cmd.command);
+                // Send button — single-click sends, right-click opens edit
+                bool hasCmdColor = cmd.color[3] > 0.01f;
+                if (hasCmdColor) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cmd.color[0], cmd.color[1], cmd.color[2], cmd.color[3]));
+                    float luma = 0.2126f*cmd.color[0] + 0.7152f*cmd.color[1] + 0.0722f*cmd.color[2];
+                    ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
                 }
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                    showEditWindow_   = true;
+                if (ImGui::Button(cmd.name.c_str()) && !cmd.command.empty())
+                    sendCommand(cmd.command);
+                if (hasCmdColor) ImGui::PopStyleColor(2);
+
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                     editTabIndex_     = tabIndex;
                     editGroupIndex_   = gi;
                     editCommandIndex_ = ci;
                     memset(tempEditName_, 0, sizeof(tempEditName_));
-                    strncpy(tempEditName_, cmd.name.c_str(), sizeof(tempEditName_) - 1);
+                    strncpy(tempEditName_, cmd.name.c_str(), sizeof(tempEditName_)-1);
+                    memset(tempEditCmd_, 0, sizeof(tempEditCmd_));
+                    strncpy(tempEditCmd_, cmd.command.c_str(), sizeof(tempEditCmd_)-1);
+                    memcpy(tempEditColor_, cmd.color, sizeof(float)*4);
+                    ImGui::OpenPopup("CmdCtxMenu");
+                }
+                if (ImGui::BeginPopup("CmdCtxMenu")) {
+                    if (ImGui::MenuItem("Edit..."))
+                        showEditWindow_ = true;
+                    ImGui::EndPopup();
+                }
+
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                        dragSrc = *(const int*)payload->Data;
+                        dragDst = ci;
+                    }
+                    ImGui::EndDragDropTarget();
                 }
 
                 // Delete button
@@ -641,11 +781,24 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
 
             ImGui::Columns(1);
 
+            // Apply deferred drag reorder
+            if (dragSrc >= 0 && dragDst >= 0 && dragSrc != dragDst) {
+                if (dragSrc < dragDst) {
+                    std::rotate(group.commands.begin() + dragSrc,
+                                group.commands.begin() + dragSrc + 1,
+                                group.commands.begin() + dragDst + 1);
+                } else {
+                    std::rotate(group.commands.begin() + dragDst,
+                                group.commands.begin() + dragSrc,
+                                group.commands.begin() + dragSrc + 1);
+                }
+            }
+
             if (deleteCmd >= 0)
                 group.commands.erase(group.commands.begin() + deleteCmd);
 
             if (ImGui::Button("+ Add Command"))
-                group.commands.push_back(ExtCommand("Button", ""));
+                group.commands.push_back(ExtCommand(">", ""));
 
             ImGui::Spacing();
         }
@@ -761,21 +914,35 @@ void SerialApp::drainPendingData() {
 }
 
 void SerialApp::renderEditWindow() {
-    // --- Rename command button ---
+    // --- Edit command button (name + command + color) ---
     if (showEditWindow_) {
-        ImGui::OpenPopup("Edit Button Name");
+        ImGui::OpenPopup("Edit Command Button");
         showEditWindow_ = false;
     }
-    if (ImGui::BeginPopupModal("Edit Button Name", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal("Edit Command Button", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Button name:");
-        ImGui::SetNextItemWidth(260);
+        ImGui::SetNextItemWidth(300);
         ImGui::InputText("##BtnName", tempEditName_, sizeof(tempEditName_));
+        ImGui::Text("Command:");
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##BtnCmd", tempEditCmd_, sizeof(tempEditCmd_));
+        ImGui::Text("Button color (alpha=0 = default):");
+        ImGui::ColorEdit4("##BtnColor", tempEditColor_,
+            ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_PickerHueWheel);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##CmdClr")) {
+            tempEditColor_[0]=0.0f; tempEditColor_[1]=0.0f;
+            tempEditColor_[2]=0.0f; tempEditColor_[3]=0.0f;
+        }
         if (ImGui::Button("OK")) {
             auto& groups = getTabGroups(editTabIndex_);
             if (editGroupIndex_ < (int)groups.size()) {
                 auto& grp = groups[editGroupIndex_];
-                if (editCommandIndex_ < (int)grp.commands.size())
-                    grp.commands[editCommandIndex_].name = std::string(tempEditName_);
+                if (editCommandIndex_ < (int)grp.commands.size()) {
+                    grp.commands[editCommandIndex_].name    = std::string(tempEditName_);
+                    grp.commands[editCommandIndex_].command = std::string(tempEditCmd_);
+                    memcpy(grp.commands[editCommandIndex_].color, tempEditColor_, sizeof(float)*4);
+                }
             }
             ImGui::CloseCurrentPopup();
         }
@@ -817,6 +984,70 @@ void SerialApp::renderEditWindow() {
             auto& groups = getTabGroups(editTabIndex_);
             if (editGroupIndex_ < (int)groups.size())
                 groups[editGroupIndex_].name = std::string(tempGroupName_);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // --- Change group color ---
+    if (showGroupColorPopup_) {
+        ImGui::OpenPopup("Change Group Color");
+        showGroupColorPopup_ = false;
+    }
+    if (ImGui::BeginPopupModal("Change Group Color", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Header color (alpha=0 = default style):");
+        ImGui::ColorPicker4("##GroupColor", tempGroupColor_,
+            ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_AlphaBar);
+        if (ImGui::Button("OK")) {
+            auto& groups = getTabGroups(editTabIndex_);
+            if (editGroupIndex_ < (int)groups.size())
+                memcpy(groups[editGroupIndex_].color, tempGroupColor_, sizeof(float)*4);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset to Default")) {
+            auto& groups = getTabGroups(editTabIndex_);
+            if (editGroupIndex_ < (int)groups.size())
+                memset(groups[editGroupIndex_].color, 0, sizeof(float)*4);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // --- Edit pinned command ---
+    if (showPinnedEditPopup_) {
+        ImGui::OpenPopup("Edit Pinned Command");
+        showPinnedEditPopup_ = false;
+    }
+    if (ImGui::BeginPopupModal("Edit Pinned Command", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Button name:");
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##PinnedName", tempPinnedName_, sizeof(tempPinnedName_));
+        ImGui::Text("Command:");
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##PinnedCmd", tempPinnedCmd_, sizeof(tempPinnedCmd_));
+        ImGui::Text("Button color:");
+        ImGui::ColorEdit4("##PinnedColor", tempPinnedColor_,
+            ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_PickerHueWheel);
+        if (ImGui::Button("OK")) {
+            auto& pv = getTabPinnedCmds(pinnedEditTabIndex_);
+            if (pinnedEditCmdIndex_ < 0) {
+                ExtCommand pc;
+                pc.name    = std::string(tempPinnedName_);
+                pc.command = std::string(tempPinnedCmd_);
+                memcpy(pc.color, tempPinnedColor_, sizeof(float)*4);
+                pv.push_back(pc);
+            } else if (pinnedEditCmdIndex_ < (int)pv.size()) {
+                pv[pinnedEditCmdIndex_].name    = std::string(tempPinnedName_);
+                pv[pinnedEditCmdIndex_].command  = std::string(tempPinnedCmd_);
+                memcpy(pv[pinnedEditCmdIndex_].color, tempPinnedColor_, sizeof(float)*4);
+            }
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -966,6 +1197,13 @@ std::vector<ExtGroup>& SerialApp::getTabGroups(int tabIndex) {
     if (tabIndex == 0) return config.ext1Groups;
     if (tabIndex == 1) return config.ext2Groups;
     return config.ext3Groups;
+}
+
+std::vector<ExtCommand>& SerialApp::getTabPinnedCmds(int tabIndex) {
+    auto& config = configManager_.getConfig();
+    if (tabIndex == 0) return config.ext1PinnedCmds;
+    if (tabIndex == 1) return config.ext2PinnedCmds;
+    return config.ext3PinnedCmds;
 }
 
 bool SerialApp::splitterV(const char* str_id, float* size1, float* size2, float min_size1, float min_size2) {

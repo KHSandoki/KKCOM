@@ -78,19 +78,33 @@ private:
     int toggleInterval0_ = 1;
     int toggleInterval1_ = 1;
 
-    // Edit state for command button name
+    // Edit state for command button (name + command + color)
     bool showEditWindow_ = false;
     int editTabIndex_ = 0;
     int editGroupIndex_ = 0;
     int editCommandIndex_ = 0;
     char tempEditName_[64] = "";
+    char tempEditCmd_[256] = "";
+    float tempEditColor_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     // Group management state
     bool showAddGroupPopup_ = false;
     bool showRenameGroupPopup_ = false;
+    bool showGroupColorPopup_ = false;
     int contextTabIndex_ = -1;
     int contextGroupIndex_ = -1;
     char tempGroupName_[64] = "";
+    float tempGroupColor_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    // Pinned commands state
+    bool showPinnedEditPopup_ = false;
+    int pinnedEditTabIndex_ = 0;
+    int pinnedEditCmdIndex_ = -1;
+    char tempPinnedName_[64] = "";
+    char tempPinnedCmd_[256] = "";
+    float tempPinnedColor_[4] = {0.26f, 0.59f, 0.98f, 0.80f};
+    int contextPinnedTabIndex_ = -1;
+    int contextPinnedIndex_ = -1;
 
     // Logging state
     bool loggingEnabled_ = true;
@@ -129,6 +143,7 @@ private:
     bool splitterV(const char* str_id, float* size1, float* size2, float min_size1, float min_size2);
     void setWindowIcon(GLFWwindow* window);
     std::vector<ExtGroup>& getTabGroups(int tabIndex);
+    std::vector<ExtCommand>& getTabPinnedCmds(int tabIndex);
 
     // Logging methods
     void startLogging();

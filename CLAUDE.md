@@ -66,3 +66,47 @@ The application requires Python with the following dependencies:
 4. Data filtered and displayed in main text area
 5. Commands sent via entry field or custom buttons
 6. Custom commands saved to JSON for persistence
+
+---
+
+## C++ Edition (KKCOM_CPP)
+
+The C++ rewrite lives in `KKCOM_CPP/` and uses ImGui + GLFW + OpenGL.
+
+### Build (Release)
+
+Prerequisites: Visual Studio 2019, CMake, vcpkg (already set up in `KKCOM_CPP/vcpkg/`)
+
+If `build_release/` already exists (incremental build):
+```bash
+cd KKCOM_CPP/build_release
+cmake --build . --config Release
+# Output: KKCOM_CPP/build_release/Release/KKCOM_CPP.exe
+```
+
+If a clean build is needed, delete `build_release/` first then run `build_release.bat` (requires interactive terminal with UAC).
+
+### Versioning
+
+Version is defined in `KKCOM_CPP/include/version.h`:
+```cpp
+#define KKCOM_VERSION_BUILD 6
+#define KKCOM_VERSION_STRING "1.0.0"
+#define KKCOM_VERSION_STRING_FULL "1.0.0-beta.6"
+```
+
+Update these values before building a new release. The window title reads `KKCOM_VERSION_STRING_FULL` at runtime.
+
+### Release to GitHub
+
+1. Update version in `KKCOM_CPP/include/version.h`
+2. Commit: `git add KKCOM_CPP/include/version.h && git commit -m "Bump version to vX.X.X-betaX"`
+3. Tag: `git tag vX.X.X-betaX && git push origin master && git push origin vX.X.X-betaX`
+4. Rebuild: `cd KKCOM_CPP/build_release && cmake --build . --config Release`
+5. Create release (requires `gh` CLI, installed at `C:\Program Files\GitHub CLI\gh.exe`):
+```bash
+"/c/Program Files/GitHub CLI/gh.exe" release create vX.X.X-betaX \
+  "KKCOM_CPP/build_release/Release/KKCOM_CPP.exe#KKCOM_CPP.exe" \
+  --title "KKCOM C++ Edition vX.X.X-betaX" \
+  --notes "Release notes here"
+```

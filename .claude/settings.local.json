@@ -20,7 +20,15 @@
       "Bash(cmd.exe /c \"build_debug.bat\")",
       "Bash(cmd.exe /c \"build_release.bat\")",
       "Bash(powershell -command \"Get-Content ''C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\2019\\\\BuildTools\\\\Common7\\\\Tools\\\\VsDevCmd.bat'' -TotalCount 200 | Select-Object -Skip 100\")",
-      "WebSearch"
+      "WebSearch",
+      "Bash(cmd /c build_release.bat)",
+      "Bash(gh release:*)",
+      "Bash(where gh:*)",
+      "Bash(cmd /c \"where gh\")",
+      "Bash(cmd /c \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe --version\")",
+      "Bash(cmd /c \"winget list --id GitHub.cli\")",
+      "Bash(tasklist)",
+      "Bash(cmd /c \"tasklist | findstr /i \"\"msi winget gh install\"\"\")"
     ],
     "deny": []
   }

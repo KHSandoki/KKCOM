@@ -56,17 +56,24 @@ bool ConfigManager::saveConfig() {
 void ConfigManager::to_json(nlohmann::json& j, const ExtCommand& cmd) {
     j = nlohmann::json{
         {"name", cmd.name},
-        {"command", cmd.command}
+        {"command", cmd.command},
+        {"color", {cmd.color[0], cmd.color[1], cmd.color[2], cmd.color[3]}}
     };
 }
 
 void ConfigManager::from_json(const nlohmann::json& j, ExtCommand& cmd) {
     j.at("name").get_to(cmd.name);
     j.at("command").get_to(cmd.command);
+    if (j.contains("color") && j["color"].is_array() && j["color"].size() == 4) {
+        for (int i = 0; i < 4; ++i) cmd.color[i] = j["color"][i].get<float>();
+    } else {
+        cmd.color[0]=0.0f; cmd.color[1]=0.0f; cmd.color[2]=0.0f; cmd.color[3]=0.0f;
+    }
 }
 
 void ConfigManager::to_json(nlohmann::json& j, const ExtGroup& group) {
     j["name"] = group.name;
+    j["color"] = {group.color[0], group.color[1], group.color[2], group.color[3]};
     j["commands"] = nlohmann::json::array();
     for (const auto& cmd : group.commands) {
         nlohmann::json cmdJson;
@@ -77,6 +84,11 @@ void ConfigManager::to_json(nlohmann::json& j, const ExtGroup& group) {
 
 void ConfigManager::from_json(const nlohmann::json& j, ExtGroup& group) {
     j.at("name").get_to(group.name);
+    if (j.contains("color") && j["color"].is_array() && j["color"].size() == 4) {
+        for (int i = 0; i < 4; ++i) group.color[i] = j["color"][i].get<float>();
+    } else {
+        group.color[0]=0.0f; group.color[1]=0.0f; group.color[2]=0.0f; group.color[3]=0.0f;
+    }
     if (j.contains("commands")) {
         for (const auto& cmdJson : j["commands"]) {
             if (cmdJson.is_object()) {
@@ -125,6 +137,18 @@ void ConfigManager::to_json(nlohmann::json& j, const AppConfig& config) {
     serializeGroups("ext2Groups", config.ext2Groups);
     serializeGroups("ext3Groups", config.ext3Groups);
 
+    auto serializePinned = [&](const std::string& key, const std::vector<ExtCommand>& pinned) {
+        j[key] = nlohmann::json::array();
+        for (const auto& cmd : pinned) {
+            nlohmann::json cmdJson;
+            to_json(cmdJson, cmd);
+            j[key].push_back(cmdJson);
+        }
+    };
+    serializePinned("ext1PinnedCmds", config.ext1PinnedCmds);
+    serializePinned("ext2PinnedCmds", config.ext2PinnedCmds);
+    serializePinned("ext3PinnedCmds", config.ext3PinnedCmds);
+
     j["toggleCommand0"] = config.toggleCommand0;
     j["toggleCommand1"] = config.toggleCommand1;
     j["toggleInterval0"] = config.toggleInterval0;
@@ -159,6 +183,22 @@ void ConfigManager::from_json(const nlohmann::json& j, AppConfig& config) {
     loadGroups("ext1Groups", "ext1Commands", config.ext1Groups);
     loadGroups("ext2Groups", "ext2Commands", config.ext2Groups);
     loadGroups("ext3Groups", "ext3Commands", config.ext3Groups);
+
+    auto loadPinned = [&](const std::string& key, std::vector<ExtCommand>& pinned) {
+        if (j.contains(key)) {
+            pinned.clear();
+            for (const auto& cmdJson : j[key]) {
+                if (cmdJson.is_object()) {
+                    ExtCommand cmd;
+                    from_json(cmdJson, cmd);
+                    pinned.push_back(cmd);
+                }
+            }
+        }
+    };
+    loadPinned("ext1PinnedCmds", config.ext1PinnedCmds);
+    loadPinned("ext2PinnedCmds", config.ext2PinnedCmds);
+    loadPinned("ext3PinnedCmds", config.ext3PinnedCmds);
 
     if (j.contains("toggleCommand0")) j["toggleCommand0"].get_to(config.toggleCommand0);
     if (j.contains("toggleCommand1")) j["toggleCommand1"].get_to(config.toggleCommand1);
