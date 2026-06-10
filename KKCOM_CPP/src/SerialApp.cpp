@@ -499,15 +499,24 @@ void SerialApp::renderDataDisplay() {
     // If this window is focused and no text is selected, capture character input for single-key sending
     if (ImGui::IsWindowFocused() && !textSelect_.hasSelection()) {
         ImGuiIO& io = ImGui::GetIO();
+        // Printable characters are sent raw, one per keystroke (no auto newline).
         if (io.InputQueueCharacters.Size > 0) {
             for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
                 char c = io.InputQueueCharacters[i];
-                if (c >= 32 || c == '\n' || c == '\r' || c == '\t') {
-                    // Single keystrokes are sent raw — no line ending appended.
+                if (c >= 32 || c == '\t') {
                     sendCommand(std::string(1, c), false);
                 }
             }
             io.InputQueueCharacters.resize(0);
+        }
+        // Enter is a key event, not a queued character, so it never appears in
+        // InputQueueCharacters. Handle it here: send the configured line ending
+        // as the terminator the device expects. Without this, raw keystrokes
+        // could never terminate a line and the device would appear unresponsive.
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
+            const char* ending = lineEndingString();
+            if (ending[0] != '\0') sendCommand(std::string(ending), false);
         }
     }
 
@@ -672,6 +681,8 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
     if (ImGui::Button("Collapse All")) forceOpenState = 0;
     ImGui::SameLine();
     if (ImGui::Button("Expand All")) forceOpenState = 1;
+    ImGui::SameLine();
+    if (ImGui::Button("Save Config")) saveConfiguration();
 
     ImGui::Separator();
     ImGui::Spacing();
