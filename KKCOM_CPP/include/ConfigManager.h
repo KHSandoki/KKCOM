@@ -42,6 +42,7 @@ struct AppConfig {
     int lastBaudRate = 115200;
     std::string filterString;
     bool filterActive = false;
+    int lineEndingMode = 3;  // 0=None, 1=LF, 2=CR, 3=CR+LF (applied to command sends)
 
     AppConfig();
     void initializeDefaults();

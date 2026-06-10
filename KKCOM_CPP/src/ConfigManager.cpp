@@ -157,6 +157,7 @@ void ConfigManager::to_json(nlohmann::json& j, const AppConfig& config) {
     j["lastBaudRate"]    = config.lastBaudRate;
     j["filterString"]    = config.filterString;
     j["filterActive"]    = config.filterActive;
+    j["lineEndingMode"]  = config.lineEndingMode;
 }
 
 void ConfigManager::from_json(const nlohmann::json& j, AppConfig& config) {
@@ -208,4 +209,5 @@ void ConfigManager::from_json(const nlohmann::json& j, AppConfig& config) {
     if (j.contains("lastBaudRate")) j["lastBaudRate"].get_to(config.lastBaudRate);
     if (j.contains("filterString")) j["filterString"].get_to(config.filterString);
     if (j.contains("filterActive")) j["filterActive"].get_to(config.filterActive);
+    if (j.contains("lineEndingMode")) j["lineEndingMode"].get_to(config.lineEndingMode);
 }

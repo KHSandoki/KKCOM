@@ -396,19 +396,27 @@ void SerialApp::renderConnectionPanel() {
 void SerialApp::renderInputPanel() {
     ImGui::Text("Send Command");
     ImGui::Separator();
-    
-    // Input field
-    ImGui::PushItemWidth(-150);
-    bool enterPressed = ImGui::InputText("##Input", inputBuffer_, sizeof(inputBuffer_), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::PopItemWidth();
-    
+
+    // Multi-line input: Enter sends, Ctrl+Enter inserts a newline. The whole
+    // block is sent in one write, with the configured line ending appended once
+    // at the end (see the "Line ending" selector below).
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float sendBtnW = 64.0f;
+    ImVec2 inputSize(-(sendBtnW + spacing), ImGui::GetTextLineHeight() * 3.0f + ImGui::GetStyle().FramePadding.y * 2.0f);
+    bool submit = ImGui::InputTextMultiline("##Input", inputBuffer_, sizeof(inputBuffer_), inputSize,
+                      ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
     ImGui::SameLine();
-    if (ImGui::Button("Send") || enterPressed) {
+    if (ImGui::Button("Send", ImVec2(sendBtnW, inputSize.y)) || submit) {
         if (strlen(inputBuffer_) > 0) {
             sendCommand(std::string(inputBuffer_));
         }
     }
-    
+
+    // Line ending applied to all command sends (single keystrokes stay raw).
+    ImGui::SetNextItemWidth(180.0f);
+    const char* endingItems[] = { "None", "LF (\\n)", "CR (\\r)", "CR+LF (\\r\\n)" };
+    ImGui::Combo("Line ending", &lineEndingMode_, endingItems, IM_ARRAYSIZE(endingItems));
+
     // Send every functionality
     ImGui::Checkbox("Send Every", &sendEveryEnabled_);
     if (sendEveryEnabled_ != sendEveryRunning_) {
@@ -426,7 +434,9 @@ void SerialApp::renderInputPanel() {
 
     if (sendEveryEnabled_) {
         ImGui::SameLine();
-        ImGui::PushItemWidth(100);
+        // Wide enough for the value plus the +/- step buttons (was 100, which
+        // clipped 2+ digit intervals).
+        ImGui::PushItemWidth(180);
         ImGui::InputInt("sec", &sendEveryInterval_);
         if (sendEveryInterval_ < 1) sendEveryInterval_ = 1;
         ImGui::PopItemWidth();
@@ -493,7 +503,8 @@ void SerialApp::renderDataDisplay() {
             for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
                 char c = io.InputQueueCharacters[i];
                 if (c >= 32 || c == '\n' || c == '\r' || c == '\t') {
-                    sendCommand(std::string(1, c));
+                    // Single keystrokes are sent raw — no line ending appended.
+                    sendCommand(std::string(1, c), false);
                 }
             }
             io.InputQueueCharacters.resize(0);
@@ -586,9 +597,9 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
     auto& groups = getTabGroups(tabIndex);
     auto& pinned = getTabPinnedCmds(tabIndex);
 
-    ImGui::BeginChild("ExtCommands", ImVec2(0, 0), false);
-
     // --- Pinned quick-commands bar ---
+    // Rendered outside the scrolling group list below so it stays fixed at the
+    // top while the command groups scroll.
     ImGui::PushID("PinnedBar");
     for (int pi = 0; pi < (int)pinned.size(); ++pi) {
         auto& pc = pinned[pi];
@@ -655,9 +666,18 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
         memset(tempGroupName_, 0, sizeof(tempGroupName_));
         strncpy(tempGroupName_, "New Group", sizeof(tempGroupName_) - 1);
     }
+    // Collapse / expand every group in this tab (one-shot, applied this frame).
+    int forceOpenState = -1;  // -1 = leave as-is, 0 = collapse all, 1 = expand all
+    ImGui::SameLine();
+    if (ImGui::Button("Collapse All")) forceOpenState = 0;
+    ImGui::SameLine();
+    if (ImGui::Button("Expand All")) forceOpenState = 1;
 
     ImGui::Separator();
     ImGui::Spacing();
+
+    // Scrolling list of groups — the pinned bar and buttons above stay fixed.
+    ImGui::BeginChild("ExtGroupList", ImVec2(0, 0), false);
 
     int deleteGroupIdx = -1;
 
@@ -674,6 +694,7 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
             float luma = 0.2126f*hc.x + 0.7152f*hc.y + 0.0722f*hc.z;
             ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
         }
+        if (forceOpenState >= 0) ImGui::SetNextItemOpen(forceOpenState == 1);
         bool open = ImGui::CollapsingHeader(group.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
         if (hasGroupColor) ImGui::PopStyleColor(4);
 
@@ -1116,11 +1137,22 @@ void SerialApp::renderEditWindow() {
     }
 }
 
-void SerialApp::sendCommand(const std::string& command) {
+const char* SerialApp::lineEndingString() const {
+    switch (lineEndingMode_) {
+        case 1:  return "\n";
+        case 2:  return "\r";
+        case 3:  return "\r\n";
+        default: return "";   // 0 = None
+    }
+}
+
+void SerialApp::sendCommand(const std::string& command, bool appendEnding) {
     if (serialManager_.isConnected()) {
-        // Log sent data
+        // Log the command text (without the auto-appended ending)
         logData(command, false);
-        serialManager_.sendData(command);
+        std::string out = command;
+        if (appendEnding) out += lineEndingString();
+        serialManager_.sendData(out);
     }
 }
 
@@ -1237,6 +1269,9 @@ void SerialApp::loadConfiguration() {
         if (it != baudRates_.end()) {
             selectedBaudRate_ = static_cast<int>(std::distance(baudRates_.begin(), it));
         }
+
+        if (config.lineEndingMode >= 0 && config.lineEndingMode <= 3)
+            lineEndingMode_ = config.lineEndingMode;
     }
 }
 
@@ -1253,6 +1288,8 @@ void SerialApp::saveConfiguration() {
 
     // Save filter
     config.filterString = std::string(filterBuffer_);
+
+    config.lineEndingMode = lineEndingMode_;
 
     configManager_.saveConfig();
 }

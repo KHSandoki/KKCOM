@@ -215,7 +215,8 @@ bool SerialManager::sendData(const std::string& data) {
         return false;
     }
 
-    std::string dataWithCRLF = data + "\r\n";
+    // The caller (SerialApp::sendCommand) is responsible for any line ending —
+    // send the bytes exactly as given.
 
     // Multiple threads (UI, sendEvery, toggleSend) may call sendData()
     // concurrently — serialize writes so commands don't interleave on the wire.
@@ -223,11 +224,11 @@ bool SerialManager::sendData(const std::string& data) {
 
 #ifdef _WIN32
     DWORD bytesWritten;
-    return WriteFile(serialHandle_, dataWithCRLF.c_str(), dataWithCRLF.length(), &bytesWritten, nullptr) &&
-           bytesWritten == dataWithCRLF.length();
+    return WriteFile(serialHandle_, data.c_str(), static_cast<DWORD>(data.length()), &bytesWritten, nullptr) &&
+           bytesWritten == data.length();
 #else
-    ssize_t bytesWritten = write(serialFd_, dataWithCRLF.c_str(), dataWithCRLF.length());
-    return bytesWritten == static_cast<ssize_t>(dataWithCRLF.length());
+    ssize_t bytesWritten = write(serialFd_, data.c_str(), data.length());
+    return bytesWritten == static_cast<ssize_t>(data.length());
 #endif
 }
 

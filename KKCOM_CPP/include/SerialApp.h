@@ -37,8 +37,9 @@ private:
 
     // GUI state
     bool showDemo_ = false;
-    char inputBuffer_[256] = "";
+    char inputBuffer_[4096] = "";   // multi-line send buffer
     char filterBuffer_[256] = "";
+    int lineEndingMode_ = 3;        // 0=None,1=LF,2=CR,3=CR+LF; appended to command sends
     std::deque<std::string> receivedData_;
     std::string partialLine_;           // incomplete line (no \n yet), displayed live
     std::mutex dataMutex_;
@@ -135,7 +136,10 @@ private:
 
     // Serial communication
     void onDataReceived(const std::string& data);
-    void sendCommand(const std::string& command);
+    // appendEnding=true appends the configured line ending; single keystrokes
+    // pass false to send the raw byte with no newline.
+    void sendCommand(const std::string& command, bool appendEnding = true);
+    const char* lineEndingString() const;
     void refreshPorts();
     void toggleConnection();
 
