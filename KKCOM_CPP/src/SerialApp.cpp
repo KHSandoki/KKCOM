@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
+#include <ctime>
 #include <sstream>
 #include <iomanip>
 #ifdef _WIN32
@@ -129,33 +131,28 @@ bool SerialApp::initialize() {
     // Refresh available ports
     refreshPorts();
     
-    // Main loop
-    // Frame rate limiting
-    auto lastFrameTime = std::chrono::high_resolution_clock::now();
-    const auto targetFrameTime = std::chrono::milliseconds(16); // 60 FPS
-    
+    // Main loop. Pacing is handled by vsync (glfwSwapInterval(1) above), which
+    // blocks glfwSwapBuffers until the display refresh — so no manual frame
+    // limiting is needed. The previous sleep-based limiter fought vsync and
+    // introduced frame-interval jitter (visible micro-stutter).
     while (!glfwWindowShouldClose(window)) {
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        auto deltaTime = currentTime - lastFrameTime;
-        
-        if (deltaTime >= targetFrameTime) {
+        // When focused, drive at the display refresh rate. When unfocused, idle
+        // until an event or a short timeout to cut CPU/GPU use while still
+        // updating for incoming serial data (~20 FPS).
+        if (glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
             glfwPollEvents();
-            
-            // Reduce rendering frequency when window is not focused
-            bool windowFocused = glfwGetWindowAttrib(window, GLFW_FOCUSED);
-            if (!windowFocused && deltaTime < std::chrono::milliseconds(100)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                continue;
-            }
-        
+        } else {
+            glfwWaitEventsTimeout(0.05);
+        }
+
         // Start the Dear ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        
+
         // Render our GUI
         renderMainWindow();
-        
+
         // Rendering
         ImGui::Render();
         int display_w, display_h;
@@ -164,13 +161,8 @@ bool SerialApp::initialize() {
         glClearColor(0.45f, 0.55f, 0.60f, 1.00f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        
-        glfwSwapBuffers(window);
-            lastFrameTime = currentTime;
-        } else {
-            // Sleep to prevent busy waiting
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+
+        glfwSwapBuffers(window); // vsync paces this to the display refresh
     }
     
     // Cleanup
@@ -534,6 +526,15 @@ void SerialApp::renderDataDisplay() {
     // is actually interacting with the window — not every frame unconditionally.
     if (ImGui::IsWindowHovered() || ImGui::IsWindowFocused() || textSelect_.hasSelection()) {
         textSelect_.update();
+
+        // TextSelect::update() copies to the clipboard on Ctrl+C. Once copied,
+        // drop the selection so deferred front-trimming can resume and the
+        // buffer doesn't keep growing. (Plain key check, so it doesn't fight
+        // TextSelect's own Shortcut routing for the copy.)
+        if (textSelect_.hasSelection() && ImGui::GetIO().KeyCtrl &&
+            ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            textSelect_.clearSelection();
+        }
     }
 
     ImGui::EndChild();
@@ -1406,25 +1407,44 @@ void SerialApp::flushLogIfDue() {
     }
 }
 
+// Thread-safe and allocation-light: localtime_s/_r write into a caller-owned
+// tm (no shared static buffer) and snprintf avoids the stringstream/locale
+// overhead that was costly at high line rates.
+static std::tm localtimeSafe(std::time_t t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
+}
+
 std::string SerialApp::getCurrentTimestamp() {
     auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
-    
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
-    ss << "." << std::setfill('0') << std::setw(3) << ms.count();
-    return ss.str();
+
+    std::tm tm = localtimeSafe(t);
+    char buf[32];
+    int n = std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                          tm.tm_hour, tm.tm_min, tm.tm_sec,
+                          static_cast<int>(ms.count()));
+    return std::string(buf, n > 0 ? static_cast<size_t>(n) : 0);
 }
 
 std::string SerialApp::generateAutoFilename() {
     auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-    
-    std::stringstream ss;
-    ss << "com_log_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S") << ".txt";
-    return ss.str();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+
+    std::tm tm = localtimeSafe(t);
+    char buf[64];
+    int n = std::snprintf(buf, sizeof(buf), "com_log_%04d%02d%02d_%02d%02d%02d.txt",
+                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                          tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return std::string(buf, n > 0 ? static_cast<size_t>(n) : 0);
 }
 
 void SerialApp::openFileDialog() {

@@ -56,7 +56,7 @@ private:
     // Connection state
     std::vector<SerialManager::PortInfo> availablePorts_;
     int selectedPortIndex_ = 0;
-    int selectedBaudRate_ = 7; // Index for 115200
+    int selectedBaudRate_ = 9; // Index of 115200 in baudRates_ (was 7 = 38400, mislabeled)
     std::vector<int> baudRates_ = {300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 921600};
     bool connected_ = false;
 
@@ -167,8 +167,10 @@ private:
     static const int MAX_DISPLAY_LINES = 1000;
     // While the user has an active text selection, front-trimming is paused to
     // keep TextSelect's line indices stable. This is the safety cap at which we
-    // give up and resume trimming even if a selection is held.
-    static const int MAX_DISPLAY_LINES_HARD_CAP = 50000;
+    // give up and resume trimming even if a selection is held. Kept modest so a
+    // selection left active under heavy streaming doesn't bloat the buffer (and
+    // make the per-frame TextSelect rebuild expensive).
+    static const int MAX_DISPLAY_LINES_HARD_CAP = 10000;
     // Flush buffered log data to disk at least this often, even if fewer than
     // 50 lines have accumulated and logging hasn't stopped.
     static constexpr int LOG_FLUSH_INTERVAL_MS = 1000;
