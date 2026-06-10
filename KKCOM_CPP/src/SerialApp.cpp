@@ -214,6 +214,13 @@ void SerialApp::renderMainWindow() {
     // Time-based log flush so buffered lines reach disk even when idle.
     flushLogIfDue();
 
+    // Detect a dropped connection (e.g. USB unplugged) and tear it down so the
+    // UI reflects reality instead of showing a stale "Connected" state.
+    if (connected_ && serialManager_.connectionLost()) {
+        serialManager_.disconnect();
+        connected_ = false;
+    }
+
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
@@ -1305,6 +1312,7 @@ void SerialApp::startLogging() {
             logFile_.flush();
             logFlushCounter_ = 0;
             lastLogFlush_ = std::chrono::steady_clock::now();
+            logPartialLine_.clear();
         }
     }
 }
@@ -1312,6 +1320,13 @@ void SerialApp::startLogging() {
 void SerialApp::stopLogging() {
     std::lock_guard<std::mutex> lock(logMutex_);
     if (logFile_.is_open()) {
+        // Flush any leftover incomplete line so the tail isn't lost.
+        if (!logPartialLine_.empty()) {
+            if (logPartialLine_.back() == '\r') logPartialLine_.pop_back();
+            writeLogLine("[RX] ", logPartialLine_);
+            logPartialLine_.clear();
+        }
+
         std::string stopMsg = "=== Logging stopped ===";
         if (timestampEnabled_) {
             stopMsg = getCurrentTimestamp() + " " + stopMsg;
@@ -1327,17 +1342,44 @@ void SerialApp::logData(const std::string& data, bool isReceived) {
     std::lock_guard<std::mutex> lock(logMutex_);
     if (!logFile_.is_open() || !loggingEnabled_) return;
 
-    std::string prefix = isReceived ? "[RX] " : "[TX] ";
-    std::string logEntry = prefix + data;
+    if (isReceived) {
+        // Serial data arrives in arbitrary byte chunks, so reassemble complete
+        // lines before writing. Otherwise a logical line split across two reads
+        // gets a spurious timestamp + newline injected in the middle.
+        logPartialLine_ += data;
 
+        size_t start = 0, pos;
+        while ((pos = logPartialLine_.find('\n', start)) != std::string::npos) {
+            std::string line(logPartialLine_, start, pos - start);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            writeLogLine("[RX] ", line);
+            start = pos + 1;
+        }
+        if (start > 0) logPartialLine_.erase(0, start);
+
+        // Guard against an endless no-newline stream growing the buffer forever.
+        static const size_t MAX_LOG_PARTIAL = 65536;
+        if (logPartialLine_.size() > MAX_LOG_PARTIAL) {
+            writeLogLine("[RX] ", logPartialLine_);
+            logPartialLine_.clear();
+        }
+    } else {
+        // TX commands are already a single whole line.
+        std::string line = data;
+        if (!line.empty() && line.back() == '\n') line.pop_back();
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        writeLogLine("[TX] ", line);
+    }
+}
+
+// Writes one complete log line (optionally timestamped) and applies the
+// line-count-based flush. Caller must hold logMutex_.
+void SerialApp::writeLogLine(const char* prefix, const std::string& line) {
+    std::string entry = std::string(prefix) + line + "\n";
     if (timestampEnabled_) {
-        logEntry = getCurrentTimestamp() + " " + logEntry;
+        entry = getCurrentTimestamp() + " " + entry;
     }
-
-    logFile_ << logEntry;
-    if (data.back() != '\n') {
-        logFile_ << '\n';
-    }
+    logFile_ << entry;
 
     // Flush every 50 lines instead of every line to avoid per-line disk I/O.
     // A time-based flush in flushLogIfDue() covers the case where fewer than 50

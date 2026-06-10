@@ -115,6 +115,9 @@ private:
     std::ofstream logFile_;
     int logFlushCounter_ = 0;
     std::chrono::steady_clock::time_point lastLogFlush_ = std::chrono::steady_clock::now();
+    // Incomplete trailing RX bytes (no newline yet), held so logged lines aren't
+    // split mid-line when a logical line spans multiple serial read chunks.
+    std::string logPartialLine_;
     // Guards logFile_/logFlushCounter_: logData() runs on the serial RX/TX
     // threads while flushLogIfDue() and start/stopLogging() run on the UI thread.
     std::mutex logMutex_;
@@ -154,6 +157,7 @@ private:
     void startLogging();
     void stopLogging();
     void logData(const std::string& data, bool isReceived = true);
+    void writeLogLine(const char* prefix, const std::string& line);  // assumes logMutex_ held
     void flushLogIfDue();
     std::string getCurrentTimestamp();
     std::string generateAutoFilename();

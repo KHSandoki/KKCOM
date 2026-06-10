@@ -33,6 +33,9 @@ public:
     bool connect(const std::string& portName, int baudRate);
     void disconnect();
     bool isConnected() const { return connected_; }
+    // True if the receive loop detected the device went away (e.g. USB unplug).
+    // The UI polls this and calls disconnect() to tear the connection down.
+    bool connectionLost() const { return connectionLost_.load(); }
     
     // Data operations
     bool sendData(const std::string& data);
@@ -52,8 +55,10 @@ private:
     
     std::atomic<bool> connected_;
     std::atomic<bool> receiving_;
+    std::atomic<bool> connectionLost_{false};
     std::thread receiveThread_;
     DataCallback dataCallback_;
     int timeout_;
     std::mutex callbackMutex_;
+    std::mutex writeMutex_;   // serializes sendData() across UI/sendEvery/toggle threads
 };
