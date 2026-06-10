@@ -211,6 +211,7 @@ void SerialApp::renderMainWindow() {
     if (connected_ && serialManager_.connectionLost()) {
         serialManager_.disconnect();
         connected_ = false;
+        connectionStatus_ = "Connection lost — device disconnected";
     }
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -383,6 +384,13 @@ void SerialApp::renderConnectionPanel() {
     const char* baudRateStrings[] = {"300","600","1200","2400","4800","9600","19200","38400","57600","115200","921600"};
     ImGui::Combo("##BaudRate", &selectedBaudRate_, baudRateStrings, IM_ARRAYSIZE(baudRateStrings));
     ImGui::PopItemWidth();
+
+    // Non-intrusive inline status (connect failure / lost connection).
+    if (!connectionStatus_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::TextWrapped("%s", connectionStatus_.c_str());
+        ImGui::PopStyleColor();
+    }
 }
 
 void SerialApp::renderInputPanel() {
@@ -522,9 +530,17 @@ void SerialApp::renderDataDisplay() {
         prevScrollY_ = scrollY;
     }
 
-    // Only run TextSelect (which rebuilds a full-list vector) when the user
-    // is actually interacting with the window — not every frame unconditionally.
-    if (ImGui::IsWindowHovered() || ImGui::IsWindowFocused() || textSelect_.hasSelection()) {
+    // TextSelect::update() rebuilds a vector of ALL lines on every call (O(n)
+    // plus a per-frame heap allocation), so running it on mere hover made
+    // scrolling through a large buffer stutter. Only run it when the user is
+    // actually selecting: an existing selection, a mouse press/drag over the
+    // window, or a Ctrl shortcut (Ctrl+A / Ctrl+C) while focused. Plain hover
+    // and wheel-scrolling skip it entirely.
+    bool mouseSelecting = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+                          ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    bool ctrlShortcut = ImGui::IsWindowFocused() && ImGui::GetIO().KeyCtrl;
+    if (textSelect_.hasSelection() || ctrlShortcut ||
+        (mouseSelecting && ImGui::IsWindowHovered())) {
         textSelect_.update();
 
         // TextSelect::update() copies to the clipboard on Ctrl+C. Once copied,
@@ -1120,15 +1136,21 @@ void SerialApp::toggleConnection() {
         serialManager_.disconnect();
         connected_ = false;
     } else {
+        connectionStatus_.clear();
         if (!availablePorts_.empty() && selectedPortIndex_ < static_cast<int>(availablePorts_.size())) {
             const std::string& selectedPort = availablePorts_[selectedPortIndex_].port;
             int baudRate = baudRates_[selectedBaudRate_];
-            
+
             if (serialManager_.connect(selectedPort, baudRate)) {
                 connected_ = true;
                 configManager_.getConfig().lastPort = selectedPort;
                 configManager_.getConfig().lastBaudRate = baudRate;
+            } else {
+                connectionStatus_ = "Failed to open " + selectedPort +
+                                    " (in use, unplugged, or wrong settings)";
             }
+        } else {
+            connectionStatus_ = "No serial port selected";
         }
     }
 }

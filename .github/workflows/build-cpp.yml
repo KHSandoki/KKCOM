@@ -24,7 +24,6 @@ on:
 
 env:
   IMGUI_VERSION: v1.92.0
-  TEXTSELECT_VERSION: v1.3.1
   VCPKG_TRIPLET: x64-windows-static
 
 jobs:
@@ -35,20 +34,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch bundled dependencies (ImGui + textselect)
+      - name: Fetch bundled dependencies (ImGui)
         shell: bash
         working-directory: KKCOM_CPP
         run: |
           set -euo pipefail
-          # Dear ImGui -> libs/imgui (provides backends/ and misc/cpp/)
+          # Dear ImGui -> libs/imgui (provides backends/ and misc/cpp/).
+          # textselect is vendored under third_party/ (with a local patch), so it
+          # is no longer downloaded here.
           git clone --depth 1 --branch "$IMGUI_VERSION" \
             https://github.com/ocornut/imgui.git libs/imgui
-          # ImGuiTextSelect -> libs/textselect.{hpp,cpp}
-          git clone --depth 1 --branch "$TEXTSELECT_VERSION" \
-            https://github.com/AidanSun05/ImGuiTextSelect.git libs/_textselect
-          cp libs/_textselect/textselect.hpp libs/textselect.hpp
-          cp libs/_textselect/textselect.cpp libs/textselect.cpp
-          rm -rf libs/_textselect
           echo "libs/ contents:"
           ls -la libs
 

@@ -59,6 +59,7 @@ private:
     int selectedBaudRate_ = 9; // Index of 115200 in baudRates_ (was 7 = 38400, mislabeled)
     std::vector<int> baudRates_ = {300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 921600};
     bool connected_ = false;
+    std::string connectionStatus_;  // inline error/status shown in the connection panel
 
     // Send every functionality
     bool sendEveryEnabled_ = false;
