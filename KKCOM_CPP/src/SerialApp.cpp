@@ -211,6 +211,9 @@ void SerialApp::shutdown() {
 }
 
 void SerialApp::renderMainWindow() {
+    // Time-based log flush so buffered lines reach disk even when idle.
+    flushLogIfDue();
+
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
@@ -281,9 +284,12 @@ void SerialApp::renderMainWindow() {
             
             ImGui::Separator();
             if (ImGui::Button("Clear Log File")) {
+                std::lock_guard<std::mutex> lock(logMutex_);
                 if (logFile_.is_open()) {
                     logFile_.close();
                     logFile_.open(logFilePath_, std::ios::trunc);
+                    logFlushCounter_ = 0;
+                    lastLogFlush_ = std::chrono::steady_clock::now();
                 }
             }
             
@@ -893,7 +899,22 @@ void SerialApp::drainPendingData() {
                 return;
         }
         receivedData_.push_back(std::move(line));
-        if (receivedData_.size() > MAX_DISPLAY_LINES) {
+
+        // TextSelect tracks the selection by line index, so popping lines off
+        // the front while a selection is active would shift the highlight onto
+        // the wrong rows. Defer front-trimming until the selection is cleared,
+        // allowing the buffer to grow up to a hard cap as a safety valve.
+        size_t limit = MAX_DISPLAY_LINES;
+        if (textSelect_.hasSelection()) {
+            if (receivedData_.size() > MAX_DISPLAY_LINES_HARD_CAP) {
+                // Selection held too long under heavy streaming: drop it so the
+                // buffer can be trimmed back to its normal size.
+                textSelect_.clearSelection();
+            } else {
+                limit = MAX_DISPLAY_LINES_HARD_CAP;
+            }
+        }
+        while (receivedData_.size() > limit) {
             receivedData_.pop_front();
             ++itemsRemovedFromFront_;
         }
@@ -1272,6 +1293,7 @@ bool SerialApp::splitterV(const char* str_id, float* size1, float* size2, float 
 }
 
 void SerialApp::startLogging() {
+    std::lock_guard<std::mutex> lock(logMutex_);
     if (!logFile_.is_open()) {
         logFile_.open(logFilePath_, std::ios::app);
         if (logFile_.is_open()) {
@@ -1281,11 +1303,14 @@ void SerialApp::startLogging() {
             }
             logFile_ << startMsg << std::endl;
             logFile_.flush();
+            logFlushCounter_ = 0;
+            lastLogFlush_ = std::chrono::steady_clock::now();
         }
     }
 }
 
 void SerialApp::stopLogging() {
+    std::lock_guard<std::mutex> lock(logMutex_);
     if (logFile_.is_open()) {
         std::string stopMsg = "=== Logging stopped ===";
         if (timestampEnabled_) {
@@ -1299,6 +1324,7 @@ void SerialApp::stopLogging() {
 }
 
 void SerialApp::logData(const std::string& data, bool isReceived) {
+    std::lock_guard<std::mutex> lock(logMutex_);
     if (!logFile_.is_open() || !loggingEnabled_) return;
 
     std::string prefix = isReceived ? "[RX] " : "[TX] ";
@@ -1313,10 +1339,28 @@ void SerialApp::logData(const std::string& data, bool isReceived) {
         logFile_ << '\n';
     }
 
-    // Flush every 50 lines instead of every line to avoid per-line disk I/O
+    // Flush every 50 lines instead of every line to avoid per-line disk I/O.
+    // A time-based flush in flushLogIfDue() covers the case where fewer than 50
+    // lines arrive and the stream goes idle.
     if (++logFlushCounter_ >= 50) {
         logFile_.flush();
         logFlushCounter_ = 0;
+        lastLogFlush_ = std::chrono::steady_clock::now();
+    }
+}
+
+// Flush buffered log lines to disk if the flush interval has elapsed, so data
+// reaches disk even when the line-count threshold isn't met and the serial
+// stream is idle. Called once per frame.
+void SerialApp::flushLogIfDue() {
+    std::lock_guard<std::mutex> lock(logMutex_);
+    if (!logFile_.is_open() || logFlushCounter_ == 0) return;
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastLogFlush_ >= std::chrono::milliseconds(LOG_FLUSH_INTERVAL_MS)) {
+        logFile_.flush();
+        logFlushCounter_ = 0;
+        lastLogFlush_ = now;
     }
 }
 

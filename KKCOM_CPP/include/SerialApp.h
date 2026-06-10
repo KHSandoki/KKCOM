@@ -16,6 +16,7 @@
 #include <queue>
 #include <condition_variable>
 #include <fstream>
+#include <chrono>
 
 class SerialApp {
 public:
@@ -113,6 +114,10 @@ private:
     char logFilePath_[512] = "com_log.txt";
     std::ofstream logFile_;
     int logFlushCounter_ = 0;
+    std::chrono::steady_clock::time_point lastLogFlush_ = std::chrono::steady_clock::now();
+    // Guards logFile_/logFlushCounter_: logData() runs on the serial RX/TX
+    // threads while flushLogIfDue() and start/stopLogging() run on the UI thread.
+    std::mutex logMutex_;
 
     // GUI methods
     void renderMainWindow();
@@ -149,10 +154,18 @@ private:
     void startLogging();
     void stopLogging();
     void logData(const std::string& data, bool isReceived = true);
+    void flushLogIfDue();
     std::string getCurrentTimestamp();
     std::string generateAutoFilename();
     void openFileDialog();
 
     // Constants
     static const int MAX_DISPLAY_LINES = 1000;
+    // While the user has an active text selection, front-trimming is paused to
+    // keep TextSelect's line indices stable. This is the safety cap at which we
+    // give up and resume trimming even if a selection is held.
+    static const int MAX_DISPLAY_LINES_HARD_CAP = 50000;
+    // Flush buffered log data to disk at least this often, even if fewer than
+    // 50 lines have accumulated and logging hasn't stopped.
+    static constexpr int LOG_FLUSH_INTERVAL_MS = 1000;
 };
