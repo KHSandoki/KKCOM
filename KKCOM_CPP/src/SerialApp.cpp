@@ -684,102 +684,116 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
             int deleteCmd = -1;
             int dragSrc = -1, dragDst = -1;
 
-            ImGui::Columns(3, "CmdCols", true);
-            ImGui::SetColumnWidth(0, 30.0f);
-            ImGui::TextDisabled(" ");
-            ImGui::NextColumn();
-            ImGui::TextDisabled("Command");
-            ImGui::NextColumn();
-            ImGui::TextDisabled("Send  (right-click = edit)");
-            ImGui::NextColumn();
-            ImGui::Separator();
+            // Resizable table: the drag-handle column is fixed at 30px, while
+            // Command and Send stretch. The Tables API persists user-dragged
+            // column widths across frames, unlike the legacy Columns API which
+            // snapped back every frame due to the per-frame SetColumnWidth call.
+            const ImGuiTableFlags cmdTableFlags =
+                ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV |
+                ImGuiTableFlags_NoSavedSettings;
+            if (ImGui::BeginTable("CmdCols", 3, cmdTableFlags)) {
+                ImGui::TableSetupColumn("##drag",
+                    ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, 30.0f);
+                ImGui::TableSetupColumn("Command", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Send",    ImGuiTableColumnFlags_WidthStretch);
 
-            for (int ci = 0; ci < (int)group.commands.size(); ++ci) {
-                auto& cmd = group.commands[ci];
-                ImGui::PushID(ci);
+                // Header row (kept as dimmed text to match the previous look)
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled(" ");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextDisabled("Command");
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextDisabled("Send  (right-click = edit)");
 
-                // Drag handle column
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-                ImGui::SmallButton("=");
-                ImGui::PopStyleColor(2);
+                for (int ci = 0; ci < (int)group.commands.size(); ++ci) {
+                    auto& cmd = group.commands[ci];
+                    ImGui::PushID(ci);
+                    ImGui::TableNextRow();
 
-                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-                    ImGui::SetDragDropPayload("CMD_REORDER", &ci, sizeof(int));
-                    ImGui::Text("Move: %s", cmd.name.c_str());
-                    ImGui::EndDragDropSource();
-                }
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
-                        dragSrc = *(const int*)payload->Data;
-                        dragDst = ci;
+                    // Drag handle column
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
+                    ImGui::SmallButton("=");
+                    ImGui::PopStyleColor(2);
+
+                    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                        ImGui::SetDragDropPayload("CMD_REORDER", &ci, sizeof(int));
+                        ImGui::Text("Move: %s", cmd.name.c_str());
+                        ImGui::EndDragDropSource();
                     }
-                    ImGui::EndDragDropTarget();
-                }
-                ImGui::NextColumn();
-
-                // Command input column
-                ImGui::PushItemWidth(-1);
-                ImGui::InputText("##Cmd", &cmd.command);
-                ImGui::PopItemWidth();
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
-                        dragSrc = *(const int*)payload->Data;
-                        dragDst = ci;
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                            dragSrc = *(const int*)payload->Data;
+                            dragDst = ci;
+                        }
+                        ImGui::EndDragDropTarget();
                     }
-                    ImGui::EndDragDropTarget();
-                }
-                ImGui::NextColumn();
 
-                // Send button — single-click sends, right-click opens edit
-                bool hasCmdColor = cmd.color[3] > 0.01f;
-                if (hasCmdColor) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cmd.color[0], cmd.color[1], cmd.color[2], cmd.color[3]));
-                    float luma = 0.2126f*cmd.color[0] + 0.7152f*cmd.color[1] + 0.0722f*cmd.color[2];
-                    ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
-                }
-                if (ImGui::Button(cmd.name.c_str()) && !cmd.command.empty())
-                    sendCommand(cmd.command);
-                if (hasCmdColor) ImGui::PopStyleColor(2);
-
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                    editTabIndex_     = tabIndex;
-                    editGroupIndex_   = gi;
-                    editCommandIndex_ = ci;
-                    memset(tempEditName_, 0, sizeof(tempEditName_));
-                    strncpy(tempEditName_, cmd.name.c_str(), sizeof(tempEditName_)-1);
-                    memset(tempEditCmd_, 0, sizeof(tempEditCmd_));
-                    strncpy(tempEditCmd_, cmd.command.c_str(), sizeof(tempEditCmd_)-1);
-                    memcpy(tempEditColor_, cmd.color, sizeof(float)*4);
-                    ImGui::OpenPopup("CmdCtxMenu");
-                }
-                if (ImGui::BeginPopup("CmdCtxMenu")) {
-                    if (ImGui::MenuItem("Edit..."))
-                        showEditWindow_ = true;
-                    ImGui::EndPopup();
-                }
-
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
-                        dragSrc = *(const int*)payload->Data;
-                        dragDst = ci;
+                    // Command input column
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputText("##Cmd", &cmd.command);
+                    ImGui::PopItemWidth();
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                            dragSrc = *(const int*)payload->Data;
+                            dragDst = ci;
+                        }
+                        ImGui::EndDragDropTarget();
                     }
-                    ImGui::EndDragDropTarget();
+
+                    // Send button column — single-click sends, right-click opens edit
+                    ImGui::TableSetColumnIndex(2);
+                    bool hasCmdColor = cmd.color[3] > 0.01f;
+                    if (hasCmdColor) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cmd.color[0], cmd.color[1], cmd.color[2], cmd.color[3]));
+                        float luma = 0.2126f*cmd.color[0] + 0.7152f*cmd.color[1] + 0.0722f*cmd.color[2];
+                        ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
+                    }
+                    if (ImGui::Button(cmd.name.c_str()) && !cmd.command.empty())
+                        sendCommand(cmd.command);
+                    if (hasCmdColor) ImGui::PopStyleColor(2);
+
+                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                        editTabIndex_     = tabIndex;
+                        editGroupIndex_   = gi;
+                        editCommandIndex_ = ci;
+                        memset(tempEditName_, 0, sizeof(tempEditName_));
+                        strncpy(tempEditName_, cmd.name.c_str(), sizeof(tempEditName_)-1);
+                        memset(tempEditCmd_, 0, sizeof(tempEditCmd_));
+                        strncpy(tempEditCmd_, cmd.command.c_str(), sizeof(tempEditCmd_)-1);
+                        memcpy(tempEditColor_, cmd.color, sizeof(float)*4);
+                        ImGui::OpenPopup("CmdCtxMenu");
+                    }
+                    if (ImGui::BeginPopup("CmdCtxMenu")) {
+                        if (ImGui::MenuItem("Edit..."))
+                            showEditWindow_ = true;
+                        ImGui::EndPopup();
+                    }
+
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                            dragSrc = *(const int*)payload->Data;
+                            dragDst = ci;
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+
+                    // Delete button
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
+                    if (ImGui::SmallButton("x"))
+                        deleteCmd = ci;
+                    ImGui::PopStyleColor(2);
+
+                    ImGui::PopID();
                 }
 
-                // Delete button
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
-                if (ImGui::SmallButton("x"))
-                    deleteCmd = ci;
-                ImGui::PopStyleColor(2);
-
-                ImGui::NextColumn();
-                ImGui::PopID();
+                ImGui::EndTable();
             }
-
-            ImGui::Columns(1);
 
             // Apply deferred drag reorder
             if (dragSrc >= 0 && dragDst >= 0 && dragSrc != dragDst) {
