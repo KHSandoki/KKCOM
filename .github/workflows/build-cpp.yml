@@ -1,0 +1,91 @@
+name: Build KKCOM C++ (Windows)
+
+# Builds the C++/ImGui edition (KKCOM_CPP) on a Windows runner.
+#
+# The bundled third-party sources (Dear ImGui + ImGuiTextSelect) live under
+# KKCOM_CPP/libs/ which is .gitignored, so this workflow fetches them at pinned
+# versions before building. glfw3 and nlohmann-json are installed via the
+# runner's preinstalled vcpkg using the x64-windows-static triplet, matching
+# build_release.bat.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "KKCOM_CPP/**"
+      - ".github/workflows/build-cpp.yml"
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "KKCOM_CPP/**"
+      - ".github/workflows/build-cpp.yml"
+  workflow_dispatch: {}
+
+env:
+  IMGUI_VERSION: v1.92.0
+  TEXTSELECT_VERSION: v1.3.1
+  VCPKG_TRIPLET: x64-windows-static
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch bundled dependencies (ImGui + textselect)
+        shell: bash
+        working-directory: KKCOM_CPP
+        run: |
+          set -euo pipefail
+          # Dear ImGui -> libs/imgui (provides backends/ and misc/cpp/)
+          git clone --depth 1 --branch "$IMGUI_VERSION" \
+            https://github.com/ocornut/imgui.git libs/imgui
+          # ImGuiTextSelect -> libs/textselect.{hpp,cpp}
+          git clone --depth 1 --branch "$TEXTSELECT_VERSION" \
+            https://github.com/AidanSun05/ImGuiTextSelect.git libs/_textselect
+          cp libs/_textselect/textselect.hpp libs/textselect.hpp
+          cp libs/_textselect/textselect.cpp libs/textselect.cpp
+          rm -rf libs/_textselect
+          echo "libs/ contents:"
+          ls -la libs
+
+      - name: Install vcpkg dependencies (glfw3, nlohmann-json)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install \
+            "glfw3:${VCPKG_TRIPLET}" \
+            "nlohmann-json:${VCPKG_TRIPLET}"
+
+      - name: Configure (CMake, Release, static runtime)
+        shell: bash
+        working-directory: KKCOM_CPP
+        run: |
+          set -euo pipefail
+          cmake -S . -B build_release \
+            -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DENABLE_DEBUG_MODE=OFF
+
+      - name: Build
+        shell: bash
+        working-directory: KKCOM_CPP
+        run: cmake --build build_release --config Release --parallel
+
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KKCOM_CPP-${{ github.sha }}
+          path: KKCOM_CPP/build_release/Release/KKCOM_CPP.exe
+          if-no-files-found: error
+
+      - name: Attach executable to release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: KKCOM_CPP/build_release/Release/KKCOM_CPP.exe
