@@ -472,9 +472,18 @@ void TextSelect::selectAll() {
 }
 
 void TextSelect::update() {
-    // ImGui::GetCursorStartPos() is in window coordinates so it is added to the window position
-    ImVec2 cursorPosStart = ImGui::GetWindowPos() + ImGui::GetCursorStartPos();
-    cursorPosStart.x += ImGui::GetCurrentWindow()->DC.Indent.x;
+    // [Local patch vs upstream v1.3.1] Compute the text origin the same way
+    // ImGui positions each new line: Pos.x + DC.Indent.x + DC.ColumnsOffset.x
+    // (see ImGui::ItemSize). Since ImGui 1.90+, DC.Indent.x is an absolute
+    // offset from the window edge that already includes window padding and
+    // horizontal scroll, so upstream's "GetCursorStartPos() + Indent.x"
+    // double-counted the padding and shifted both hit-testing and the drawn
+    // selection right by WindowPadding.x (one character at default sizes).
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    ImVec2 cursorPosStart{
+        IM_TRUNC(window->Pos.x + window->DC.Indent.x + window->DC.ColumnsOffset.x),
+        window->DC.CursorStartPos.y
+    };
 
     // Switch cursors if the window is hovered
     bool hovered = ImGui::IsWindowHovered();
