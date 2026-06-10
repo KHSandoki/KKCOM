@@ -18,6 +18,24 @@
 #include <fstream>
 #include <chrono>
 
+// One rendered line in the Received Data view. Raw bytes are kept so the line
+// can be re-rendered as ASCII or hex and (optionally) prefixed with a timestamp
+// and TX/RX direction without losing information.
+struct DisplayLine {
+    bool isTx = false;
+    std::string bytes;                          // raw line bytes (no trailing newline)
+    std::chrono::system_clock::time_point time;
+    std::string display;                        // cached formatted text for render + selection
+};
+
+// A pending RX chunk or TX line handed from the serial/UI threads to the
+// render thread (preserves ordering between RX and TX).
+struct PendingEvent {
+    bool isTx = false;
+    std::string bytes;
+    std::chrono::system_clock::time_point time;
+};
+
 class SerialApp {
 public:
     SerialApp();
@@ -40,12 +58,18 @@ private:
     char inputBuffer_[4096] = "";   // multi-line send buffer
     char filterBuffer_[256] = "";
     int lineEndingMode_ = 3;        // 0=None,1=LF,2=CR,3=CR+LF; appended to command sends
-    std::deque<std::string> receivedData_;
-    std::string partialLine_;           // incomplete line (no \n yet), displayed live
+    std::deque<DisplayLine> receivedData_;
+    std::string partialLine_;           // incomplete RX line (no \n yet), displayed live
     std::mutex dataMutex_;
-    std::queue<std::string> pendingData_;
+    std::queue<PendingEvent> pendingData_;
     std::mutex pendingMutex_;
     TextSelect textSelect_;
+
+    // Received Data view options
+    bool displayHex_ = false;     // show received/sent bytes as hex
+    bool showTimestamp_ = false;  // prefix each line with a timestamp
+    bool showDirection_ = false;  // prefix RX/TX and echo sent commands into the view
+    bool hexInput_ = false;       // interpret the bottom send box as hex bytes
     bool autoScroll_ = true;
     int itemsRemovedFromFront_ = 0;
     float prevScrollY_ = 0.0f;
@@ -138,8 +162,16 @@ private:
     void onDataReceived(const std::string& data);
     // appendEnding=true appends the configured line ending; single keystrokes
     // pass false to send the raw byte with no newline.
-    void sendCommand(const std::string& command, bool appendEnding = true);
-    const char* lineEndingString() const;
+    // echo=true mirrors the command into the view as TX when direction display is
+    // on; single keystrokes pass echo=false (no local echo of typing).
+    void sendCommand(const std::string& command, bool appendEnding = true, bool echo = true);
+    std::string lineEndingString() const;
+
+    // Received Data view helpers
+    static std::string bytesToHex(const std::string& bytes);
+    static std::string hexToBytes(const std::string& hex);
+    std::string formatDisplayLine(const DisplayLine& dl) const;
+    void reformatDisplay();   // re-render all cached lines after a view-option change
     void refreshPorts();
     void toggleConnection();
 

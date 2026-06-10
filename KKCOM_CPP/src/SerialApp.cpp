@@ -22,10 +22,12 @@
 #include <commdlg.h>
 #endif
 
+static std::tm localtimeSafe(std::time_t t);  // defined near getCurrentTimestamp()
+
 SerialApp::SerialApp() :
     configManager_("config.json"),
     textSelect_(
-        [this](std::size_t i) -> std::string_view { return receivedData_[i]; },
+        [this](std::size_t i) -> std::string_view { return receivedData_[i].display; },
         [this]() -> std::size_t { return receivedData_.size(); }
     )
 {
@@ -242,6 +244,15 @@ void SerialApp::renderMainWindow() {
         }
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Show Demo", nullptr, &showDemo_);
+            ImGui::Separator();
+            ImGui::TextDisabled("Received Data");
+            bool viewChanged = false;
+            viewChanged |= ImGui::MenuItem("Hex Display", nullptr, &displayHex_);
+            viewChanged |= ImGui::MenuItem("Show Timestamp", nullptr, &showTimestamp_);
+            viewChanged |= ImGui::MenuItem("Show TX/RX (echo sent)", nullptr, &showDirection_);
+            if (viewChanged) reformatDisplay();   // re-render cached lines
+            ImGui::Separator();
+            ImGui::MenuItem("Hex Input (send box)", nullptr, &hexInput_);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Log")) {
@@ -408,13 +419,14 @@ void SerialApp::renderInputPanel() {
     ImGui::SameLine();
     if (ImGui::Button("Send", ImVec2(sendBtnW, inputSize.y)) || submit) {
         if (strlen(inputBuffer_) > 0) {
-            sendCommand(std::string(inputBuffer_));
+            std::string payload = hexInput_ ? hexToBytes(inputBuffer_) : std::string(inputBuffer_);
+            if (!payload.empty()) sendCommand(payload);
         }
     }
 
     // Line ending applied to all command sends (single keystrokes stay raw).
-    ImGui::SetNextItemWidth(180.0f);
-    const char* endingItems[] = { "None", "LF (\\n)", "CR (\\r)", "CR+LF (\\r\\n)" };
+    ImGui::SetNextItemWidth(200.0f);
+    const char* endingItems[] = { "None", "LF (\\n)", "CR (\\r)", "CR+LF (\\r\\n)", "NUL (\\0)" };
     ImGui::Combo("Line ending", &lineEndingMode_, endingItems, IM_ARRAYSIZE(endingItems));
 
     // Send every functionality
@@ -504,7 +516,7 @@ void SerialApp::renderDataDisplay() {
             for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
                 char c = io.InputQueueCharacters[i];
                 if (c >= 32 || c == '\t') {
-                    sendCommand(std::string(1, c), false);
+                    sendCommand(std::string(1, c), false, false);
                 }
             }
             io.InputQueueCharacters.resize(0);
@@ -515,8 +527,8 @@ void SerialApp::renderDataDisplay() {
         // could never terminate a line and the device would appear unresponsive.
         if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
             ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
-            const char* ending = lineEndingString();
-            if (ending[0] != '\0') sendCommand(std::string(ending), false);
+            std::string ending = lineEndingString();
+            if (!ending.empty()) sendCommand(ending, false, false);
         }
     }
 
@@ -525,13 +537,15 @@ void SerialApp::renderDataDisplay() {
     clipper.Begin(static_cast<int>(receivedData_.size()));
     while (clipper.Step()) {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-            ImGui::TextUnformatted(receivedData_[i].c_str());
+            ImGui::TextUnformatted(receivedData_[i].display.c_str());
         }
     }
 
-    // Show incomplete line (no \n yet) so data is visible without waiting for newline
+    // Show incomplete line (no \n yet) so data is visible without waiting for a
+    // newline. Shown hex-or-ASCII but without the timestamp/direction prefix.
     if (!partialLine_.empty()) {
-        ImGui::TextUnformatted(partialLine_.c_str());
+        std::string partialDisp = displayHex_ ? bytesToHex(partialLine_) : partialLine_;
+        ImGui::TextUnformatted(partialDisp.c_str());
     }
 
     // Smart auto-scroll: disable when user scrolls up, re-enable when back at bottom
@@ -933,28 +947,29 @@ void SerialApp::onDataReceived(const std::string& data) {
 
     // Push to pending queue — minimal lock time
     std::lock_guard<std::mutex> lock(pendingMutex_);
-    pendingData_.push(data);
+    pendingData_.push({ false, data, std::chrono::system_clock::now() });
 }
 
 void SerialApp::drainPendingData() {
     // Swap the pending queue out under minimal lock
-    std::queue<std::string> local;
+    std::queue<PendingEvent> local;
     {
         std::lock_guard<std::mutex> lock(pendingMutex_);
         std::swap(local, pendingData_);
     }
 
-    // Split raw chunks into lines, maintaining partialLine_ for incomplete data.
     // No lock needed — receivedData_ and partialLine_ are render-thread only.
     const auto& config = configManager_.getConfig();
     static const size_t MAX_PARTIAL_LINE = 4096;
 
-    auto pushLine = [&](std::string line) {
-        if (config.filterActive && !config.filterString.empty()) {
-            if (line.find(config.filterString) == std::string::npos)
+    auto pushLine = [&](DisplayLine dl) {
+        // The filter applies to received lines only; sent (TX) lines always show.
+        if (!dl.isTx && config.filterActive && !config.filterString.empty()) {
+            if (dl.bytes.find(config.filterString) == std::string::npos)
                 return;
         }
-        receivedData_.push_back(std::move(line));
+        dl.display = formatDisplayLine(dl);
+        receivedData_.push_back(std::move(dl));
 
         // TextSelect tracks the selection by line index, so popping lines off
         // the front while a selection is active would shift the highlight onto
@@ -963,8 +978,6 @@ void SerialApp::drainPendingData() {
         size_t limit = MAX_DISPLAY_LINES;
         if (textSelect_.hasSelection()) {
             if (receivedData_.size() > MAX_DISPLAY_LINES_HARD_CAP) {
-                // Selection held too long under heavy streaming: drop it so the
-                // buffer can be trimmed back to its normal size.
                 textSelect_.clearSelection();
             } else {
                 limit = MAX_DISPLAY_LINES_HARD_CAP;
@@ -977,28 +990,44 @@ void SerialApp::drainPendingData() {
     };
 
     while (!local.empty()) {
-        partialLine_ += std::move(local.front());
+        PendingEvent ev = std::move(local.front());
         local.pop();
 
-        // Scan for newlines using an offset — avoids O(N^2) erase-in-loop.
-        // All found lines are extracted in one pass; a single erase follows.
-        size_t searchStart = 0;
-        size_t pos;
+        if (ev.isTx) {
+            // Sent commands arrive as complete lines.
+            DisplayLine dl;
+            dl.isTx = true;
+            dl.bytes = std::move(ev.bytes);
+            dl.time = ev.time;
+            pushLine(std::move(dl));
+            continue;
+        }
+
+        // RX chunk: assemble complete lines, keeping partialLine_ for the
+        // incomplete tail. Bytes are stored without the trailing newline.
+        partialLine_ += ev.bytes;
+        size_t searchStart = 0, pos;
         while ((pos = partialLine_.find('\n', searchStart)) != std::string::npos) {
             std::string line(partialLine_, searchStart, pos - searchStart);
             if (!line.empty() && line.back() == '\r')
                 line.pop_back();
-            line += '\n';
             searchStart = pos + 1;
-            pushLine(std::move(line));
+            DisplayLine dl;
+            dl.isTx = false;
+            dl.bytes = std::move(line);
+            dl.time = ev.time;
+            pushLine(std::move(dl));
         }
-        // Remove all consumed bytes in one shot
         if (searchStart > 0)
             partialLine_.erase(0, searchStart);
 
         // Cap partial line to avoid unbounded growth on no-newline streams
         while (partialLine_.size() > MAX_PARTIAL_LINE) {
-            pushLine(partialLine_.substr(0, MAX_PARTIAL_LINE));
+            DisplayLine dl;
+            dl.isTx = false;
+            dl.bytes = partialLine_.substr(0, MAX_PARTIAL_LINE);
+            dl.time = ev.time;
+            pushLine(std::move(dl));
             partialLine_.erase(0, MAX_PARTIAL_LINE);
         }
     }
@@ -1148,22 +1177,81 @@ void SerialApp::renderEditWindow() {
     }
 }
 
-const char* SerialApp::lineEndingString() const {
+std::string SerialApp::bytesToHex(const std::string& bytes) {
+    static const char* H = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(bytes.size() * 3);
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(bytes[i]);
+        if (i) out += ' ';
+        out += H[c >> 4];
+        out += H[c & 0xF];
+    }
+    return out;
+}
+
+std::string SerialApp::hexToBytes(const std::string& hex) {
+    // Parse hex digit pairs, ignoring spaces/commas/other separators. A trailing
+    // odd nibble is dropped.
+    std::string out;
+    int hi = -1;
+    for (char ch : hex) {
+        int v;
+        if (ch >= '0' && ch <= '9') v = ch - '0';
+        else if (ch >= 'a' && ch <= 'f') v = ch - 'a' + 10;
+        else if (ch >= 'A' && ch <= 'F') v = ch - 'A' + 10;
+        else continue;
+        if (hi < 0) hi = v;
+        else { out += static_cast<char>((hi << 4) | v); hi = -1; }
+    }
+    return out;
+}
+
+std::string SerialApp::formatDisplayLine(const DisplayLine& dl) const {
+    std::string out;
+    if (showTimestamp_) {
+        std::tm tm = localtimeSafe(std::chrono::system_clock::to_time_t(dl.time));
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            dl.time.time_since_epoch()) % 1000;
+        char ts[20];
+        std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03d ",
+                      tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>(ms.count()));
+        out += ts;
+    }
+    if (showDirection_) out += dl.isTx ? "TX " : "RX ";
+    out += displayHex_ ? bytesToHex(dl.bytes) : dl.bytes;
+    return out;
+}
+
+void SerialApp::reformatDisplay() {
+    for (auto& dl : receivedData_) dl.display = formatDisplayLine(dl);
+}
+
+std::string SerialApp::lineEndingString() const {
     switch (lineEndingMode_) {
         case 1:  return "\n";
         case 2:  return "\r";
         case 3:  return "\r\n";
-        default: return "";   // 0 = None
+        case 4:  return std::string(1, '\0');   // NUL terminator
+        default: return "";                      // 0 = None
     }
 }
 
-void SerialApp::sendCommand(const std::string& command, bool appendEnding) {
+void SerialApp::sendCommand(const std::string& command, bool appendEnding, bool echo) {
     if (serialManager_.isConnected()) {
         // Log the command text (without the auto-appended ending)
         logData(command, false);
         std::string out = command;
         if (appendEnding) out += lineEndingString();
         serialManager_.sendData(out);
+
+        // Echo the command into the Received Data view as TX when direction
+        // display is on. Routed through the pending queue because sendCommand
+        // can be called from the sendEvery/toggle threads, not just the UI.
+        if (echo && showDirection_ && !command.empty()) {
+            std::lock_guard<std::mutex> lock(pendingMutex_);
+            pendingData_.push({ true, command, std::chrono::system_clock::now() });
+        }
     }
 }
 
@@ -1200,8 +1288,10 @@ void SerialApp::toggleConnection() {
 
 void SerialApp::sendEveryLoop() {
     while (sendEveryRunning_) {
-        if (strlen(inputBuffer_) > 0)
-            sendCommand(std::string(inputBuffer_));
+        if (strlen(inputBuffer_) > 0) {
+            std::string payload = hexInput_ ? hexToBytes(inputBuffer_) : std::string(inputBuffer_);
+            if (!payload.empty()) sendCommand(payload);
+        }
 
         std::unique_lock<std::mutex> lk(sendEveryMutex_);
         sendEveryCv_.wait_for(lk,
@@ -1237,7 +1327,7 @@ void SerialApp::clearDataDisplay() {
     // Clear pending queue under its own lock
     {
         std::lock_guard<std::mutex> lock(pendingMutex_);
-        std::queue<std::string> empty;
+        std::queue<PendingEvent> empty;
         std::swap(pendingData_, empty);
     }
     // receivedData_ and partialLine_ are render-thread only, no lock needed
@@ -1281,7 +1371,7 @@ void SerialApp::loadConfiguration() {
             selectedBaudRate_ = static_cast<int>(std::distance(baudRates_.begin(), it));
         }
 
-        if (config.lineEndingMode >= 0 && config.lineEndingMode <= 3)
+        if (config.lineEndingMode >= 0 && config.lineEndingMode <= 4)
             lineEndingMode_ = config.lineEndingMode;
     }
 }
