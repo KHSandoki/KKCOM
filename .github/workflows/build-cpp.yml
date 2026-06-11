@@ -34,6 +34,10 @@ env:
   IMGUI_VERSION: v1.92.0
   VCPKG_TRIPLET: x64-windows-static
 
+# Needed for the tag-build step that attaches the exe to a GitHub Release.
+permissions:
+  contents: write
+
 jobs:
   build:
     # Pinned to windows-2022 (has VS2022). windows-latest rolled to an image
