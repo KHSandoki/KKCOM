@@ -632,10 +632,6 @@ void SerialApp::renderExtTabs() {
         }
         ImGui::EndTabBar();
     }
-    
-    if (ImGui::Button("Save Config")) {
-        saveConfiguration();
-    }
 }
 
 void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
@@ -714,9 +710,11 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
     // Collapse / expand every group in this tab (one-shot, applied this frame).
     int forceOpenState = -1;  // -1 = leave as-is, 0 = collapse all, 1 = expand all
     ImGui::SameLine();
-    if (ImGui::Button("Collapse All")) forceOpenState = 0;
+    if (ImGui::ArrowButton("##collapseAll", ImGuiDir_Up)) forceOpenState = 0;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse all");
     ImGui::SameLine();
-    if (ImGui::Button("Expand All")) forceOpenState = 1;
+    if (ImGui::ArrowButton("##expandAll", ImGuiDir_Down)) forceOpenState = 1;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expand all");
     ImGui::SameLine();
     if (ImGui::Button("Save Config")) saveConfiguration();
 
@@ -1467,6 +1465,11 @@ void SerialApp::computeSpans(DisplayLine& dl) const {
         } break;
         }
     }
+
+    // Leave the timestamp/direction prefix uncolored — those digits aren't data.
+    // Prefix is "HH:MM:SS.mmm " (13) + "RX "/"TX " (3) as built by formatDisplayLine.
+    size_t prefixLen = (showTimestamp_ ? 13u : 0u) + (showDirection_ ? 3u : 0u);
+    for (size_t i = 0; i < prefixLen && i < col.size(); ++i) col[i] = 0;
 
     // Collapse the per-character colors into runs.
     bool anyColor = false;
