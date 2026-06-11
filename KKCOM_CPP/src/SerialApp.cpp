@@ -1370,7 +1370,8 @@ void SerialApp::computeSpans(DisplayLine& dl) const {
         size_t prefixLen = (dl.display.size() >= dl.bytes.size())
                          ? dl.display.size() - dl.bytes.size() : 0;
         std::vector<ImU32> col(dl.display.size(), 0);
-        size_t n = std::min(dl.ansiColors.size(), dl.bytes.size());
+        // (avoid std::min — <windows.h> defines a min macro that breaks it)
+        size_t n = dl.ansiColors.size() < dl.bytes.size() ? dl.ansiColors.size() : dl.bytes.size();
         for (size_t k = 0; k < n && prefixLen + k < col.size(); ++k)
             col[prefixLen + k] = dl.ansiColors[k];
         bool any = false;
