@@ -60,6 +60,7 @@ endif()
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/libs
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/textselect
 )
 
 if(EXISTS "${IMGUI_DIR}")
@@ -72,7 +73,8 @@ endif()
 # Source files (exclude test files)
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test_serial.cpp")
-list(APPEND SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/libs/textselect.cpp")
+# textselect is vendored (with a local caret-rounding patch) under third_party/
+list(APPEND SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/textselect/textselect.cpp")
 
 # Windows resource file for icon
 if(WIN32)

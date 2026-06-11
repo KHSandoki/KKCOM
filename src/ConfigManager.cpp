@@ -10,6 +10,19 @@ void AppConfig::initializeDefaults() {
     ext1Groups = { ExtGroup("Group 1") };
     ext2Groups = { ExtGroup("Group 1") };
     ext3Groups = { ExtGroup("Group 1") };
+
+    // Default syntax-coloring rules (priority high -> low, first match wins).
+    if (colorRules.empty()) {
+        colorRules = {
+            ColorRule(3, 0.95f, 0.85f, 0.40f),                       // [Tag]   gold
+            ColorRule(2, 1.00f, 0.65f, 0.30f),                       // Hex     orange
+            ColorRule(0, 0.40f, 0.90f, 0.50f,                        // OK-ish  green
+                      "OK PASS DONE READY SUCCESS ENABLED FOUND"),
+            ColorRule(0, 1.00f, 0.45f, 0.45f,                        // Errors  red
+                      "ERROR ERR FAIL FAILED WARN WARNING ABNORMAL TIMEOUT FATAL ASSERT PANIC"),
+            ColorRule(1, 0.40f, 0.85f, 1.00f),                       // Number  cyan
+        };
+    }
 }
 
 ConfigManager::ConfigManager(const std::string& configFile)
@@ -100,6 +113,24 @@ void ConfigManager::from_json(const nlohmann::json& j, ExtGroup& group) {
     }
 }
 
+void ConfigManager::to_json(nlohmann::json& j, const ColorRule& rule) {
+    j = nlohmann::json{
+        {"enabled", rule.enabled},
+        {"type", rule.type},
+        {"pattern", rule.pattern},
+        {"color", {rule.color[0], rule.color[1], rule.color[2], rule.color[3]}}
+    };
+}
+
+void ConfigManager::from_json(const nlohmann::json& j, ColorRule& rule) {
+    rule.enabled = j.value("enabled", true);
+    rule.type = j.value("type", 0);
+    rule.pattern = j.value("pattern", std::string());
+    if (j.contains("color") && j["color"].is_array() && j["color"].size() == 4) {
+        for (int i = 0; i < 4; ++i) rule.color[i] = j["color"][i].get<float>();
+    }
+}
+
 // Migrate old flat command list (v1 format) into a single default group
 static void migrateOldCommands(const nlohmann::json& j, const std::string& key,
                                 std::vector<ExtGroup>& groups) {
@@ -157,6 +188,15 @@ void ConfigManager::to_json(nlohmann::json& j, const AppConfig& config) {
     j["lastBaudRate"]    = config.lastBaudRate;
     j["filterString"]    = config.filterString;
     j["filterActive"]    = config.filterActive;
+    j["lineEndingMode"]  = config.lineEndingMode;
+
+    j["syntaxColoring"]  = config.syntaxColoring;
+    j["colorRules"] = nlohmann::json::array();
+    for (const auto& rule : config.colorRules) {
+        nlohmann::json rj;
+        to_json(rj, rule);
+        j["colorRules"].push_back(rj);
+    }
 }
 
 void ConfigManager::from_json(const nlohmann::json& j, AppConfig& config) {
@@ -208,4 +248,17 @@ void ConfigManager::from_json(const nlohmann::json& j, AppConfig& config) {
     if (j.contains("lastBaudRate")) j["lastBaudRate"].get_to(config.lastBaudRate);
     if (j.contains("filterString")) j["filterString"].get_to(config.filterString);
     if (j.contains("filterActive")) j["filterActive"].get_to(config.filterActive);
+    if (j.contains("lineEndingMode")) j["lineEndingMode"].get_to(config.lineEndingMode);
+
+    if (j.contains("syntaxColoring")) j["syntaxColoring"].get_to(config.syntaxColoring);
+    if (j.contains("colorRules") && j["colorRules"].is_array()) {
+        config.colorRules.clear();
+        for (const auto& rj : j["colorRules"]) {
+            if (rj.is_object()) {
+                ColorRule rule;
+                from_json(rj, rule);
+                config.colorRules.push_back(rule);
+            }
+        }
+    }
 }

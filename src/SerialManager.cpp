@@ -3,6 +3,7 @@
 #include <sstream>
 #include <chrono>
 #include <cstring>
+#include <cerrno>
 
 #ifdef _WIN32
 #include <setupapi.h>
@@ -177,8 +178,9 @@ bool SerialManager::connect(const std::string& portName, int baudRate) {
     
     connected_ = true;
     receiving_ = true;
+    connectionLost_ = false;
     receiveThread_ = std::thread(&SerialManager::receiveLoop, this);
-    
+
     return true;
 }
 
@@ -205,22 +207,28 @@ void SerialManager::disconnect() {
 #endif
     
     connected_ = false;
+    connectionLost_ = false;
 }
 
 bool SerialManager::sendData(const std::string& data) {
     if (!connected_) {
         return false;
     }
-    
-    std::string dataWithCRLF = data + "\r\n";
-    
+
+    // The caller (SerialApp::sendCommand) is responsible for any line ending —
+    // send the bytes exactly as given.
+
+    // Multiple threads (UI, sendEvery, toggleSend) may call sendData()
+    // concurrently — serialize writes so commands don't interleave on the wire.
+    std::lock_guard<std::mutex> lock(writeMutex_);
+
 #ifdef _WIN32
     DWORD bytesWritten;
-    return WriteFile(serialHandle_, dataWithCRLF.c_str(), dataWithCRLF.length(), &bytesWritten, nullptr) &&
-           bytesWritten == dataWithCRLF.length();
+    return WriteFile(serialHandle_, data.c_str(), static_cast<DWORD>(data.length()), &bytesWritten, nullptr) &&
+           bytesWritten == data.length();
 #else
-    ssize_t bytesWritten = write(serialFd_, dataWithCRLF.c_str(), dataWithCRLF.length());
-    return bytesWritten == static_cast<ssize_t>(dataWithCRLF.length());
+    ssize_t bytesWritten = write(serialFd_, data.c_str(), data.length());
+    return bytesWritten == static_cast<ssize_t>(data.length());
 #endif
 }
 
@@ -230,27 +238,64 @@ void SerialManager::setDataCallback(DataCallback callback) {
 }
 
 void SerialManager::receiveLoop() {
-    char buffer[1024];
+    // Larger buffer reduces syscalls at high baud rates. Reads are paced by the
+    // read timeout (idle) or by data availability (busy) — there is no fixed
+    // per-iteration sleep, which previously capped throughput well below the
+    // 921600 baud line rate and caused data to back up over time.
+    char buffer[8192];
 
     while (receiving_) {
+        bool gotData = false;
+
 #ifdef _WIN32
-        DWORD bytesRead;
-        if (ReadFile(serialHandle_, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0) {
+        DWORD bytesRead = 0;
+        if (!ReadFile(serialHandle_, buffer, sizeof(buffer) - 1, &bytesRead, nullptr)) {
+            // Read failed — the device was most likely removed/unplugged.
+            connectionLost_ = true;
+            receiving_ = false;
+            break;
+        }
+        if (bytesRead > 0) {
+            gotData = true;
             std::lock_guard<std::mutex> lock(callbackMutex_);
             if (dataCallback_) {
                 dataCallback_(std::string(buffer, bytesRead));
+            }
+        } else {
+            // No data this cycle. Some drivers keep returning empty reads instead
+            // of failing when the device is unplugged, so probe the line state —
+            // GetCommModemStatus fails once the underlying device is gone.
+            DWORD modemStatus = 0;
+            if (!GetCommModemStatus(serialHandle_, &modemStatus)) {
+                connectionLost_ = true;
+                receiving_ = false;
+                break;
             }
         }
 #else
         ssize_t bytesRead = read(serialFd_, buffer, sizeof(buffer) - 1);
         if (bytesRead > 0) {
+            gotData = true;
             std::lock_guard<std::mutex> lock(callbackMutex_);
             if (dataCallback_) {
                 dataCallback_(std::string(buffer, bytesRead));
             }
+        } else if (bytesRead == 0) {
+            // EOF on the fd — device gone.
+            connectionLost_ = true;
+            receiving_ = false;
+            break;
+        } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            // A real error (EIO/ENXIO/EBADF...) — device removed.
+            connectionLost_ = true;
+            receiving_ = false;
+            break;
         }
 #endif
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // Only yield when idle so streaming throughput isn't throttled.
+        if (!gotData) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
 }

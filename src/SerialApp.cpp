@@ -13,6 +13,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <cctype>
 #include <sstream>
 #include <iomanip>
 #ifdef _WIN32
@@ -20,10 +24,12 @@
 #include <commdlg.h>
 #endif
 
+static std::tm localtimeSafe(std::time_t t);  // defined near getCurrentTimestamp()
+
 SerialApp::SerialApp() :
     configManager_("config.json"),
     textSelect_(
-        [this](std::size_t i) -> std::string_view { return receivedData_[i]; },
+        [this](std::size_t i) -> std::string_view { return receivedData_[i].display; },
         [this]() -> std::size_t { return receivedData_.size(); }
     )
 {
@@ -129,33 +135,28 @@ bool SerialApp::initialize() {
     // Refresh available ports
     refreshPorts();
     
-    // Main loop
-    // Frame rate limiting
-    auto lastFrameTime = std::chrono::high_resolution_clock::now();
-    const auto targetFrameTime = std::chrono::milliseconds(16); // 60 FPS
-    
+    // Main loop. Pacing is handled by vsync (glfwSwapInterval(1) above), which
+    // blocks glfwSwapBuffers until the display refresh — so no manual frame
+    // limiting is needed. The previous sleep-based limiter fought vsync and
+    // introduced frame-interval jitter (visible micro-stutter).
     while (!glfwWindowShouldClose(window)) {
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        auto deltaTime = currentTime - lastFrameTime;
-        
-        if (deltaTime >= targetFrameTime) {
+        // When focused, drive at the display refresh rate. When unfocused, idle
+        // until an event or a short timeout to cut CPU/GPU use while still
+        // updating for incoming serial data (~20 FPS).
+        if (glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
             glfwPollEvents();
-            
-            // Reduce rendering frequency when window is not focused
-            bool windowFocused = glfwGetWindowAttrib(window, GLFW_FOCUSED);
-            if (!windowFocused && deltaTime < std::chrono::milliseconds(100)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                continue;
-            }
-        
+        } else {
+            glfwWaitEventsTimeout(0.05);
+        }
+
         // Start the Dear ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        
+
         // Render our GUI
         renderMainWindow();
-        
+
         // Rendering
         ImGui::Render();
         int display_w, display_h;
@@ -164,13 +165,8 @@ bool SerialApp::initialize() {
         glClearColor(0.45f, 0.55f, 0.60f, 1.00f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        
-        glfwSwapBuffers(window);
-            lastFrameTime = currentTime;
-        } else {
-            // Sleep to prevent busy waiting
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+
+        glfwSwapBuffers(window); // vsync paces this to the display refresh
     }
     
     // Cleanup
@@ -211,6 +207,17 @@ void SerialApp::shutdown() {
 }
 
 void SerialApp::renderMainWindow() {
+    // Time-based log flush so buffered lines reach disk even when idle.
+    flushLogIfDue();
+
+    // Detect a dropped connection (e.g. USB unplugged) and tear it down so the
+    // UI reflects reality instead of showing a stale "Connected" state.
+    if (connected_ && serialManager_.connectionLost()) {
+        serialManager_.disconnect();
+        connected_ = false;
+        connectionStatus_ = "Connection lost — device disconnected";
+    }
+
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
@@ -239,6 +246,17 @@ void SerialApp::renderMainWindow() {
         }
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Show Demo", nullptr, &showDemo_);
+            ImGui::Separator();
+            ImGui::TextDisabled("Received Data");
+            bool viewChanged = false;
+            viewChanged |= ImGui::MenuItem("Hex Display", nullptr, &displayHex_);
+            viewChanged |= ImGui::MenuItem("Show Timestamp", nullptr, &showTimestamp_);
+            viewChanged |= ImGui::MenuItem("Show TX/RX (echo sent)", nullptr, &showDirection_);
+            viewChanged |= ImGui::MenuItem("Syntax Coloring", nullptr, &configManager_.getConfig().syntaxColoring);
+            if (ImGui::MenuItem("Coloring Rules...")) showColoringWindow_ = true;
+            if (viewChanged) reformatDisplay();   // re-render cached lines
+            ImGui::Separator();
+            ImGui::MenuItem("Hex Input (send box)", nullptr, &hexInput_);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Log")) {
@@ -281,9 +299,12 @@ void SerialApp::renderMainWindow() {
             
             ImGui::Separator();
             if (ImGui::Button("Clear Log File")) {
+                std::lock_guard<std::mutex> lock(logMutex_);
                 if (logFile_.is_open()) {
                     logFile_.close();
                     logFile_.open(logFilePath_, std::ios::trunc);
+                    logFlushCounter_ = 0;
+                    lastLogFlush_ = std::chrono::steady_clock::now();
                 }
             }
             
@@ -335,7 +356,8 @@ void SerialApp::renderMainWindow() {
     
     // Render edit window
     renderEditWindow();
-    
+    renderColoringWindow();
+
     // Show demo window if requested
     if (showDemo_) {
         ImGui::ShowDemoWindow(&showDemo_);
@@ -378,24 +400,40 @@ void SerialApp::renderConnectionPanel() {
     const char* baudRateStrings[] = {"300","600","1200","2400","4800","9600","19200","38400","57600","115200","921600"};
     ImGui::Combo("##BaudRate", &selectedBaudRate_, baudRateStrings, IM_ARRAYSIZE(baudRateStrings));
     ImGui::PopItemWidth();
+
+    // Non-intrusive inline status (connect failure / lost connection).
+    if (!connectionStatus_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::TextWrapped("%s", connectionStatus_.c_str());
+        ImGui::PopStyleColor();
+    }
 }
 
 void SerialApp::renderInputPanel() {
     ImGui::Text("Send Command");
     ImGui::Separator();
-    
-    // Input field
-    ImGui::PushItemWidth(-150);
-    bool enterPressed = ImGui::InputText("##Input", inputBuffer_, sizeof(inputBuffer_), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::PopItemWidth();
-    
+
+    // Multi-line input: Enter sends, Ctrl+Enter inserts a newline. The whole
+    // block is sent in one write, with the configured line ending appended once
+    // at the end (see the "Line ending" selector below).
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float sendBtnW = 64.0f;
+    ImVec2 inputSize(-(sendBtnW + spacing), ImGui::GetTextLineHeight() * 3.0f + ImGui::GetStyle().FramePadding.y * 2.0f);
+    bool submit = ImGui::InputTextMultiline("##Input", inputBuffer_, sizeof(inputBuffer_), inputSize,
+                      ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
     ImGui::SameLine();
-    if (ImGui::Button("Send") || enterPressed) {
+    if (ImGui::Button("Send", ImVec2(sendBtnW, inputSize.y)) || submit) {
         if (strlen(inputBuffer_) > 0) {
-            sendCommand(std::string(inputBuffer_));
+            std::string payload = hexInput_ ? hexToBytes(inputBuffer_) : std::string(inputBuffer_);
+            if (!payload.empty()) sendCommand(payload);
         }
     }
-    
+
+    // Line ending applied to all command sends (single keystrokes stay raw).
+    ImGui::SetNextItemWidth(200.0f);
+    const char* endingItems[] = { "None", "LF (\\n)", "CR (\\r)", "CR+LF (\\r\\n)", "NUL (\\0)" };
+    ImGui::Combo("Line ending", &lineEndingMode_, endingItems, IM_ARRAYSIZE(endingItems));
+
     // Send every functionality
     ImGui::Checkbox("Send Every", &sendEveryEnabled_);
     if (sendEveryEnabled_ != sendEveryRunning_) {
@@ -413,7 +451,9 @@ void SerialApp::renderInputPanel() {
 
     if (sendEveryEnabled_) {
         ImGui::SameLine();
-        ImGui::PushItemWidth(100);
+        // Wide enough for the value plus the +/- step buttons (was 100, which
+        // clipped 2+ digit intervals).
+        ImGui::PushItemWidth(180);
         ImGui::InputInt("sec", &sendEveryInterval_);
         if (sendEveryInterval_ < 1) sendEveryInterval_ = 1;
         ImGui::PopItemWidth();
@@ -476,14 +516,24 @@ void SerialApp::renderDataDisplay() {
     // If this window is focused and no text is selected, capture character input for single-key sending
     if (ImGui::IsWindowFocused() && !textSelect_.hasSelection()) {
         ImGuiIO& io = ImGui::GetIO();
+        // Printable characters are sent raw, one per keystroke (no auto newline).
         if (io.InputQueueCharacters.Size > 0) {
             for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
                 char c = io.InputQueueCharacters[i];
-                if (c >= 32 || c == '\n' || c == '\r' || c == '\t') {
-                    sendCommand(std::string(1, c));
+                if (c >= 32 || c == '\t') {
+                    sendCommand(std::string(1, c), false, false);
                 }
             }
             io.InputQueueCharacters.resize(0);
+        }
+        // Enter is a key event, not a queued character, so it never appears in
+        // InputQueueCharacters. Handle it here: send the configured line ending
+        // as the terminator the device expects. Without this, raw keystrokes
+        // could never terminate a line and the device would appear unresponsive.
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
+            std::string ending = lineEndingString();
+            if (!ending.empty()) sendCommand(ending, false, false);
         }
     }
 
@@ -492,13 +542,32 @@ void SerialApp::renderDataDisplay() {
     clipper.Begin(static_cast<int>(receivedData_.size()));
     while (clipper.Step()) {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-            ImGui::TextUnformatted(receivedData_[i].c_str());
+            const DisplayLine& dl = receivedData_[i];
+            if (dl.spans.empty()) {
+                ImGui::TextUnformatted(dl.display.c_str());
+            } else {
+                // Colored line: draw each span as a contiguous segment. SameLine(0,0)
+                // butts them together so glyph positions match the plain string
+                // (keeps TextSelect aligned — verified).
+                const char* base = dl.display.c_str();
+                size_t off = 0;
+                for (size_t k = 0; k < dl.spans.size(); ++k) {
+                    const ColorSpan& sp = dl.spans[k];
+                    if (k) ImGui::SameLine(0.0f, 0.0f);
+                    if (sp.color) ImGui::PushStyleColor(ImGuiCol_Text, sp.color);
+                    ImGui::TextUnformatted(base + off, base + off + sp.len);
+                    if (sp.color) ImGui::PopStyleColor();
+                    off += sp.len;
+                }
+            }
         }
     }
 
-    // Show incomplete line (no \n yet) so data is visible without waiting for newline
+    // Show incomplete line (no \n yet) so data is visible without waiting for a
+    // newline. Shown hex-or-ASCII but without the timestamp/direction prefix.
     if (!partialLine_.empty()) {
-        ImGui::TextUnformatted(partialLine_.c_str());
+        std::string partialDisp = displayHex_ ? bytesToHex(partialLine_) : partialLine_;
+        ImGui::TextUnformatted(partialDisp.c_str());
     }
 
     // Smart auto-scroll: disable when user scrolls up, re-enable when back at bottom
@@ -517,10 +586,27 @@ void SerialApp::renderDataDisplay() {
         prevScrollY_ = scrollY;
     }
 
-    // Only run TextSelect (which rebuilds a full-list vector) when the user
-    // is actually interacting with the window — not every frame unconditionally.
-    if (ImGui::IsWindowHovered() || ImGui::IsWindowFocused() || textSelect_.hasSelection()) {
+    // TextSelect::update() rebuilds a vector of ALL lines on every call (O(n)
+    // plus a per-frame heap allocation), so running it on mere hover made
+    // scrolling through a large buffer stutter. Only run it when the user is
+    // actually selecting: an existing selection, a mouse press/drag over the
+    // window, or a Ctrl shortcut (Ctrl+A / Ctrl+C) while focused. Plain hover
+    // and wheel-scrolling skip it entirely.
+    bool mouseSelecting = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+                          ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    bool ctrlShortcut = ImGui::IsWindowFocused() && ImGui::GetIO().KeyCtrl;
+    if (textSelect_.hasSelection() || ctrlShortcut ||
+        (mouseSelecting && ImGui::IsWindowHovered())) {
         textSelect_.update();
+
+        // TextSelect::update() copies to the clipboard on Ctrl+C. Once copied,
+        // drop the selection so deferred front-trimming can resume and the
+        // buffer doesn't keep growing. (Plain key check, so it doesn't fight
+        // TextSelect's own Shortcut routing for the copy.)
+        if (textSelect_.hasSelection() && ImGui::GetIO().KeyCtrl &&
+            ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            textSelect_.clearSelection();
+        }
     }
 
     ImGui::EndChild();
@@ -546,19 +632,15 @@ void SerialApp::renderExtTabs() {
         }
         ImGui::EndTabBar();
     }
-    
-    if (ImGui::Button("Save Config")) {
-        saveConfiguration();
-    }
 }
 
 void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
     auto& groups = getTabGroups(tabIndex);
     auto& pinned = getTabPinnedCmds(tabIndex);
 
-    ImGui::BeginChild("ExtCommands", ImVec2(0, 0), false);
-
     // --- Pinned quick-commands bar ---
+    // Rendered outside the scrolling group list below so it stays fixed at the
+    // top while the command groups scroll.
     ImGui::PushID("PinnedBar");
     for (int pi = 0; pi < (int)pinned.size(); ++pi) {
         auto& pc = pinned[pi];
@@ -625,9 +707,22 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
         memset(tempGroupName_, 0, sizeof(tempGroupName_));
         strncpy(tempGroupName_, "New Group", sizeof(tempGroupName_) - 1);
     }
+    // Collapse / expand every group in this tab (one-shot, applied this frame).
+    int forceOpenState = -1;  // -1 = leave as-is, 0 = collapse all, 1 = expand all
+    ImGui::SameLine();
+    if (ImGui::ArrowButton("##collapseAll", ImGuiDir_Up)) forceOpenState = 0;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse all");
+    ImGui::SameLine();
+    if (ImGui::ArrowButton("##expandAll", ImGuiDir_Down)) forceOpenState = 1;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expand all");
+    ImGui::SameLine();
+    if (ImGui::Button("Save Config")) saveConfiguration();
 
     ImGui::Separator();
     ImGui::Spacing();
+
+    // Scrolling list of groups — the pinned bar and buttons above stay fixed.
+    ImGui::BeginChild("ExtGroupList", ImVec2(0, 0), false);
 
     int deleteGroupIdx = -1;
 
@@ -644,6 +739,7 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
             float luma = 0.2126f*hc.x + 0.7152f*hc.y + 0.0722f*hc.z;
             ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
         }
+        if (forceOpenState >= 0) ImGui::SetNextItemOpen(forceOpenState == 1);
         bool open = ImGui::CollapsingHeader(group.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
         if (hasGroupColor) ImGui::PopStyleColor(4);
 
@@ -684,102 +780,116 @@ void SerialApp::renderExtTab(int tabIndex, const char* tabName) {
             int deleteCmd = -1;
             int dragSrc = -1, dragDst = -1;
 
-            ImGui::Columns(3, "CmdCols", true);
-            ImGui::SetColumnWidth(0, 30.0f);
-            ImGui::TextDisabled(" ");
-            ImGui::NextColumn();
-            ImGui::TextDisabled("Command");
-            ImGui::NextColumn();
-            ImGui::TextDisabled("Send  (right-click = edit)");
-            ImGui::NextColumn();
-            ImGui::Separator();
+            // Resizable table: the drag-handle column is fixed at 30px, while
+            // Command and Send stretch. The Tables API persists user-dragged
+            // column widths across frames, unlike the legacy Columns API which
+            // snapped back every frame due to the per-frame SetColumnWidth call.
+            const ImGuiTableFlags cmdTableFlags =
+                ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV |
+                ImGuiTableFlags_NoSavedSettings;
+            if (ImGui::BeginTable("CmdCols", 3, cmdTableFlags)) {
+                ImGui::TableSetupColumn("##drag",
+                    ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, 30.0f);
+                ImGui::TableSetupColumn("Command", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Send",    ImGuiTableColumnFlags_WidthStretch);
 
-            for (int ci = 0; ci < (int)group.commands.size(); ++ci) {
-                auto& cmd = group.commands[ci];
-                ImGui::PushID(ci);
+                // Header row (kept as dimmed text to match the previous look)
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled(" ");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextDisabled("Command");
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextDisabled("Send  (right-click = edit)");
 
-                // Drag handle column
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-                ImGui::SmallButton("=");
-                ImGui::PopStyleColor(2);
+                for (int ci = 0; ci < (int)group.commands.size(); ++ci) {
+                    auto& cmd = group.commands[ci];
+                    ImGui::PushID(ci);
+                    ImGui::TableNextRow();
 
-                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-                    ImGui::SetDragDropPayload("CMD_REORDER", &ci, sizeof(int));
-                    ImGui::Text("Move: %s", cmd.name.c_str());
-                    ImGui::EndDragDropSource();
-                }
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
-                        dragSrc = *(const int*)payload->Data;
-                        dragDst = ci;
+                    // Drag handle column
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
+                    ImGui::SmallButton("=");
+                    ImGui::PopStyleColor(2);
+
+                    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                        ImGui::SetDragDropPayload("CMD_REORDER", &ci, sizeof(int));
+                        ImGui::Text("Move: %s", cmd.name.c_str());
+                        ImGui::EndDragDropSource();
                     }
-                    ImGui::EndDragDropTarget();
-                }
-                ImGui::NextColumn();
-
-                // Command input column
-                ImGui::PushItemWidth(-1);
-                ImGui::InputText("##Cmd", &cmd.command);
-                ImGui::PopItemWidth();
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
-                        dragSrc = *(const int*)payload->Data;
-                        dragDst = ci;
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                            dragSrc = *(const int*)payload->Data;
+                            dragDst = ci;
+                        }
+                        ImGui::EndDragDropTarget();
                     }
-                    ImGui::EndDragDropTarget();
-                }
-                ImGui::NextColumn();
 
-                // Send button — single-click sends, right-click opens edit
-                bool hasCmdColor = cmd.color[3] > 0.01f;
-                if (hasCmdColor) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cmd.color[0], cmd.color[1], cmd.color[2], cmd.color[3]));
-                    float luma = 0.2126f*cmd.color[0] + 0.7152f*cmd.color[1] + 0.0722f*cmd.color[2];
-                    ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
-                }
-                if (ImGui::Button(cmd.name.c_str()) && !cmd.command.empty())
-                    sendCommand(cmd.command);
-                if (hasCmdColor) ImGui::PopStyleColor(2);
-
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                    editTabIndex_     = tabIndex;
-                    editGroupIndex_   = gi;
-                    editCommandIndex_ = ci;
-                    memset(tempEditName_, 0, sizeof(tempEditName_));
-                    strncpy(tempEditName_, cmd.name.c_str(), sizeof(tempEditName_)-1);
-                    memset(tempEditCmd_, 0, sizeof(tempEditCmd_));
-                    strncpy(tempEditCmd_, cmd.command.c_str(), sizeof(tempEditCmd_)-1);
-                    memcpy(tempEditColor_, cmd.color, sizeof(float)*4);
-                    ImGui::OpenPopup("CmdCtxMenu");
-                }
-                if (ImGui::BeginPopup("CmdCtxMenu")) {
-                    if (ImGui::MenuItem("Edit..."))
-                        showEditWindow_ = true;
-                    ImGui::EndPopup();
-                }
-
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
-                        dragSrc = *(const int*)payload->Data;
-                        dragDst = ci;
+                    // Command input column
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputText("##Cmd", &cmd.command);
+                    ImGui::PopItemWidth();
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                            dragSrc = *(const int*)payload->Data;
+                            dragDst = ci;
+                        }
+                        ImGui::EndDragDropTarget();
                     }
-                    ImGui::EndDragDropTarget();
+
+                    // Send button column — single-click sends, right-click opens edit
+                    ImGui::TableSetColumnIndex(2);
+                    bool hasCmdColor = cmd.color[3] > 0.01f;
+                    if (hasCmdColor) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cmd.color[0], cmd.color[1], cmd.color[2], cmd.color[3]));
+                        float luma = 0.2126f*cmd.color[0] + 0.7152f*cmd.color[1] + 0.0722f*cmd.color[2];
+                        ImGui::PushStyleColor(ImGuiCol_Text, luma > 0.5f ? ImVec4(0,0,0,1) : ImVec4(1,1,1,1));
+                    }
+                    if (ImGui::Button(cmd.name.c_str()) && !cmd.command.empty())
+                        sendCommand(cmd.command);
+                    if (hasCmdColor) ImGui::PopStyleColor(2);
+
+                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                        editTabIndex_     = tabIndex;
+                        editGroupIndex_   = gi;
+                        editCommandIndex_ = ci;
+                        memset(tempEditName_, 0, sizeof(tempEditName_));
+                        strncpy(tempEditName_, cmd.name.c_str(), sizeof(tempEditName_)-1);
+                        memset(tempEditCmd_, 0, sizeof(tempEditCmd_));
+                        strncpy(tempEditCmd_, cmd.command.c_str(), sizeof(tempEditCmd_)-1);
+                        memcpy(tempEditColor_, cmd.color, sizeof(float)*4);
+                        ImGui::OpenPopup("CmdCtxMenu");
+                    }
+                    if (ImGui::BeginPopup("CmdCtxMenu")) {
+                        if (ImGui::MenuItem("Edit..."))
+                            showEditWindow_ = true;
+                        ImGui::EndPopup();
+                    }
+
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CMD_REORDER")) {
+                            dragSrc = *(const int*)payload->Data;
+                            dragDst = ci;
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+
+                    // Delete button
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
+                    if (ImGui::SmallButton("x"))
+                        deleteCmd = ci;
+                    ImGui::PopStyleColor(2);
+
+                    ImGui::PopID();
                 }
 
-                // Delete button
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
-                if (ImGui::SmallButton("x"))
-                    deleteCmd = ci;
-                ImGui::PopStyleColor(2);
-
-                ImGui::NextColumn();
-                ImGui::PopID();
+                ImGui::EndTable();
             }
-
-            ImGui::Columns(1);
 
             // Apply deferred drag reorder
             if (dragSrc >= 0 && dragDst >= 0 && dragSrc != dragDst) {
@@ -857,58 +967,98 @@ void SerialApp::onDataReceived(const std::string& data) {
 
     // Push to pending queue — minimal lock time
     std::lock_guard<std::mutex> lock(pendingMutex_);
-    pendingData_.push(data);
+    pendingData_.push({ false, data, std::chrono::system_clock::now() });
 }
 
 void SerialApp::drainPendingData() {
     // Swap the pending queue out under minimal lock
-    std::queue<std::string> local;
+    std::queue<PendingEvent> local;
     {
         std::lock_guard<std::mutex> lock(pendingMutex_);
         std::swap(local, pendingData_);
     }
 
-    // Split raw chunks into lines, maintaining partialLine_ for incomplete data.
     // No lock needed — receivedData_ and partialLine_ are render-thread only.
     const auto& config = configManager_.getConfig();
     static const size_t MAX_PARTIAL_LINE = 4096;
 
-    auto pushLine = [&](std::string line) {
-        if (config.filterActive && !config.filterString.empty()) {
-            if (line.find(config.filterString) == std::string::npos)
+    auto pushLine = [&](DisplayLine dl) {
+        // The filter applies to received lines only; sent (TX) lines always show.
+        if (!dl.isTx && config.filterActive && !config.filterString.empty()) {
+            if (dl.bytes.find(config.filterString) == std::string::npos)
                 return;
         }
-        receivedData_.push_back(std::move(line));
-        if (receivedData_.size() > MAX_DISPLAY_LINES) {
+        dl.display = formatDisplayLine(dl);
+        computeSpans(dl);
+        receivedData_.push_back(std::move(dl));
+
+        // TextSelect tracks the selection by line index, so popping lines off
+        // the front while a selection is active would shift the highlight onto
+        // the wrong rows. Defer front-trimming until the selection is cleared,
+        // allowing the buffer to grow up to a hard cap as a safety valve.
+        size_t limit = MAX_DISPLAY_LINES;
+        if (textSelect_.hasSelection()) {
+            if (receivedData_.size() > MAX_DISPLAY_LINES_HARD_CAP) {
+                textSelect_.clearSelection();
+            } else {
+                limit = MAX_DISPLAY_LINES_HARD_CAP;
+            }
+        }
+        while (receivedData_.size() > limit) {
             receivedData_.pop_front();
             ++itemsRemovedFromFront_;
         }
     };
 
     while (!local.empty()) {
-        partialLine_ += std::move(local.front());
+        PendingEvent ev = std::move(local.front());
         local.pop();
 
-        // Scan for newlines using an offset — avoids O(N^2) erase-in-loop.
-        // All found lines are extracted in one pass; a single erase follows.
-        size_t searchStart = 0;
-        size_t pos;
-        while ((pos = partialLine_.find('\n', searchStart)) != std::string::npos) {
-            std::string line(partialLine_, searchStart, pos - searchStart);
-            if (!line.empty() && line.back() == '\r')
-                line.pop_back();
-            line += '\n';
-            searchStart = pos + 1;
-            pushLine(std::move(line));
+        if (ev.isTx) {
+            // Sent commands arrive as complete lines.
+            DisplayLine dl;
+            dl.isTx = true;
+            dl.bytes = std::move(ev.bytes);
+            dl.time = ev.time;
+            pushLine(std::move(dl));
+            continue;
         }
-        // Remove all consumed bytes in one shot
-        if (searchStart > 0)
-            partialLine_.erase(0, searchStart);
 
-        // Cap partial line to avoid unbounded growth on no-newline streams
-        while (partialLine_.size() > MAX_PARTIAL_LINE) {
-            pushLine(partialLine_.substr(0, MAX_PARTIAL_LINE));
-            partialLine_.erase(0, MAX_PARTIAL_LINE);
+        // RX chunk: run each byte through the ANSI (SGR) escape-code state
+        // machine, stripping escape codes and recording the active color per
+        // character. Lines are emitted on '\n'; parser/color state persists
+        // across chunks and lines (ANSI colors carry until reset).
+        auto emitLine = [&](const std::chrono::system_clock::time_point& t) {
+            DisplayLine dl;
+            dl.isTx = false;
+            dl.bytes = partialLine_;
+            dl.time = t;
+            if (partialHasAnsi_) dl.ansiColors = partialColors_;
+            pushLine(std::move(dl));
+            partialLine_.clear();
+            partialColors_.clear();
+            partialHasAnsi_ = (ansiColor_ != 0);   // color carries to the next line
+        };
+
+        for (unsigned char ch : ev.bytes) {
+            if (ansiState_ == 1) {                 // just saw ESC
+                ansiState_ = 0;
+                if (ch == '[') { ansiState_ = 2; ansiParams_.clear(); continue; }
+                // not a CSI we handle — fall through and process ch normally
+            }
+            if (ansiState_ == 2) {                 // inside CSI, waiting for final byte
+                if ((ch >= '0' && ch <= '9') || ch == ';') { ansiParams_ += (char)ch; continue; }
+                if (ch == 'm') applySgr(ansiParams_);
+                ansiState_ = 0;                    // non-'m' final bytes: ignore the sequence
+                continue;
+            }
+            if (ch == 0x1B) { ansiState_ = 1; continue; }   // ESC
+            if (ch == '\r') continue;                        // drop CR
+            if (ch == '\n') { emitLine(ev.time); continue; }
+            partialLine_ += (char)ch;
+            partialColors_.push_back(ansiColor_);
+            if (ansiColor_ != 0) partialHasAnsi_ = true;
+            if (partialLine_.size() >= MAX_PARTIAL_LINE) emitLine(ev.time);
         }
     }
 }
@@ -1057,11 +1207,306 @@ void SerialApp::renderEditWindow() {
     }
 }
 
-void SerialApp::sendCommand(const std::string& command) {
+std::string SerialApp::bytesToHex(const std::string& bytes) {
+    static const char* H = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(bytes.size() * 3);
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(bytes[i]);
+        if (i) out += ' ';
+        out += H[c >> 4];
+        out += H[c & 0xF];
+    }
+    return out;
+}
+
+std::string SerialApp::hexToBytes(const std::string& hex) {
+    // Parse hex digit pairs, ignoring spaces/commas/other separators. A trailing
+    // odd nibble is dropped.
+    std::string out;
+    int hi = -1;
+    for (char ch : hex) {
+        int v;
+        if (ch >= '0' && ch <= '9') v = ch - '0';
+        else if (ch >= 'a' && ch <= 'f') v = ch - 'a' + 10;
+        else if (ch >= 'A' && ch <= 'F') v = ch - 'A' + 10;
+        else continue;
+        if (hi < 0) hi = v;
+        else { out += static_cast<char>((hi << 4) | v); hi = -1; }
+    }
+    return out;
+}
+
+std::string SerialApp::formatDisplayLine(const DisplayLine& dl) const {
+    std::string out;
+    if (showTimestamp_) {
+        std::tm tm = localtimeSafe(std::chrono::system_clock::to_time_t(dl.time));
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            dl.time.time_since_epoch()) % 1000;
+        char ts[20];
+        std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03d ",
+                      tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>(ms.count()));
+        out += ts;
+    }
+    if (showDirection_) out += dl.isTx ? "TX " : "RX ";
+    out += displayHex_ ? bytesToHex(dl.bytes) : dl.bytes;
+    return out;
+}
+
+void SerialApp::reformatDisplay() {
+    for (auto& dl : receivedData_) {
+        dl.display = formatDisplayLine(dl);
+        computeSpans(dl);
+    }
+}
+
+void SerialApp::renderColoringWindow() {
+    if (!showColoringWindow_) return;
+    auto& config = configManager_.getConfig();
+
+    ImGui::SetNextWindowSize(ImVec2(560, 380), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Coloring Rules", &showColoringWindow_)) {
+        bool changed = false;
+        changed |= ImGui::Checkbox("Enable syntax coloring", &config.syntaxColoring);
+        ImGui::TextDisabled("Top-to-bottom, first match wins. Keyword lists are space/comma separated.");
+        ImGui::Separator();
+
+        const char* typeItems[] = { "Keywords", "Number", "Hex", "[Bracket]" };
+        int deleteIdx = -1;
+        for (int i = 0; i < (int)config.colorRules.size(); ++i) {
+            ColorRule& r = config.colorRules[i];
+            ImGui::PushID(i);
+            changed |= ImGui::Checkbox("##en", &r.enabled);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            changed |= ImGui::Combo("##type", &r.type, typeItems, IM_ARRAYSIZE(typeItems));
+            ImGui::SameLine();
+            changed |= ImGui::ColorEdit3("##col", r.color, ImGuiColorEditFlags_NoInputs);
+            ImGui::SameLine();
+            if (r.type == 0) {
+                ImGui::SetNextItemWidth(-40);
+                changed |= ImGui::InputText("##pat", &r.pattern);
+            } else {
+                ImGui::TextDisabled("(structural rule)");
+            }
+            ImGui::SameLine(ImGui::GetWindowWidth() - 34);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+            if (ImGui::SmallButton("X")) deleteIdx = i;
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        if (deleteIdx >= 0) {
+            config.colorRules.erase(config.colorRules.begin() + deleteIdx);
+            changed = true;
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("+ Keyword")) { config.colorRules.push_back(ColorRule(0, 1.0f, 1.0f, 1.0f, "WORD")); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("+ Number"))  { config.colorRules.push_back(ColorRule(1, 0.40f, 0.85f, 1.0f)); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("+ Hex"))     { config.colorRules.push_back(ColorRule(2, 1.0f, 0.65f, 0.30f)); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("+ [Tag]"))   { config.colorRules.push_back(ColorRule(3, 0.95f, 0.85f, 0.40f)); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Save Config")) saveConfiguration();
+
+        if (changed) reformatDisplay();
+    }
+    ImGui::End();
+}
+
+// Standard / bright ANSI 16-color foreground palette. Black is lightened so it
+// stays visible on the dark background.
+namespace {
+const ImU32 kAnsiFg[8] = {
+    IM_COL32( 90, 90, 90,255), IM_COL32(205, 49, 49,255), IM_COL32( 13,188,121,255), IM_COL32(229,229, 16,255),
+    IM_COL32( 54,123,229,255), IM_COL32(188, 63,188,255), IM_COL32( 17,168,205,255), IM_COL32(229,229,229,255)
+};
+const ImU32 kAnsiFgBright[8] = {
+    IM_COL32(127,127,127,255), IM_COL32(241, 76, 76,255), IM_COL32( 35,209,139,255), IM_COL32(245,245, 67,255),
+    IM_COL32( 59,142,234,255), IM_COL32(214,112,214,255), IM_COL32( 41,184,219,255), IM_COL32(255,255,255,255)
+};
+}
+
+void SerialApp::applySgr(const std::string& params) {
+    if (params.empty()) { ansiColor_ = 0; return; }   // ESC[m == reset
+    size_t i = 0;
+    while (true) {
+        size_t j = params.find(';', i);
+        std::string tok = params.substr(i, (j == std::string::npos ? params.size() : j) - i);
+        int code = tok.empty() ? 0 : std::atoi(tok.c_str());
+        if (code == 0 || code == 39) ansiColor_ = 0;                  // reset / default fg
+        else if (code >= 30 && code <= 37) ansiColor_ = kAnsiFg[code - 30];
+        else if (code >= 90 && code <= 97) ansiColor_ = kAnsiFgBright[code - 90];
+        // other SGR codes (bold, background, underline, ...) are ignored
+        if (j == std::string::npos) break;
+        i = j + 1;
+    }
+}
+
+// --- Syntax-coloring tokenizer helpers (file-local) ---
+namespace {
+inline bool isHexDigitC(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+inline bool isWordChC(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
+// Color [a,b) but only chars not already colored (first matching rule wins).
+inline void markRange(std::vector<ImU32>& col, size_t a, size_t b, ImU32 c) {
+    for (size_t i = a; i < b; ++i) if (col[i] == 0) col[i] = c;
+}
+}
+
+void SerialApp::computeSpans(DisplayLine& dl) const {
+    dl.spans.clear();
+    if (dl.display.empty()) return;
+    const auto& config = configManager_.getConfig();
+
+    // Device-specified ANSI colors take precedence over rule coloring (the line
+    // already carries colors). Only in ASCII mode — hex display reformats bytes.
+    if (!dl.ansiColors.empty() && !displayHex_) {
+        size_t prefixLen = (dl.display.size() >= dl.bytes.size())
+                         ? dl.display.size() - dl.bytes.size() : 0;
+        std::vector<ImU32> col(dl.display.size(), 0);
+        // (avoid std::min — <windows.h> defines a min macro that breaks it)
+        size_t n = dl.ansiColors.size() < dl.bytes.size() ? dl.ansiColors.size() : dl.bytes.size();
+        for (size_t k = 0; k < n && prefixLen + k < col.size(); ++k)
+            col[prefixLen + k] = dl.ansiColors[k];
+        bool any = false;
+        for (size_t i = 0; i < col.size();) {
+            size_t j = i; while (j < col.size() && col[j] == col[i]) j++;
+            dl.spans.push_back({ (int)(j - i), col[i] });
+            if (col[i]) any = true;
+            i = j;
+        }
+        if (!any) dl.spans.clear();
+        return;
+    }
+
+    if (!config.syntaxColoring) return;
+
+    const std::string& s = dl.display;
+    std::vector<ImU32> col(s.size(), 0);   // 0 = default text color
+
+    // Apply rules top-to-bottom; markRange only colors as-yet-uncolored chars,
+    // so the first matching rule wins (list order == priority).
+    for (const auto& rule : config.colorRules) {
+        if (!rule.enabled) continue;
+        ImU32 c = ImGui::ColorConvertFloat4ToU32(ImVec4(rule.color[0], rule.color[1], rule.color[2], 1.0f));
+        if (c == 0) c = IM_COL32(1, 1, 1, 255);  // never collide with the 0 sentinel
+
+        switch (rule.type) {
+        case 3: { // [Bracket tag]
+            for (size_t i = 0; i < s.size();) {
+                if (s[i] == '[') {
+                    size_t j = i + 1; while (j < s.size() && s[j] != ']') j++;
+                    if (j < s.size()) { markRange(col, i, j + 1, c); i = j + 1; continue; }
+                }
+                i++;
+            }
+        } break;
+        case 2: { // Hex: 0x.. or a bare hex token (>=4 chars, has a letter AND a digit)
+            for (size_t i = 0; i + 1 < s.size();) {
+                if (s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X')) {
+                    size_t j = i + 2; while (j < s.size() && isHexDigitC(s[j])) j++;
+                    if (j > i + 2) { markRange(col, i, j, c); i = j; continue; }
+                }
+                i++;
+            }
+            for (size_t i = 0; i < s.size();) {
+                if (!isWordChC(s[i])) { i++; continue; }
+                size_t j = i; while (j < s.size() && isWordChC(s[j])) j++;
+                bool allhex = true, hasA = false, hasD = false;
+                for (size_t k = i; k < j; ++k) {
+                    char ch = s[k];
+                    if (!isHexDigitC(ch)) { allhex = false; break; }
+                    if (std::isalpha((unsigned char)ch)) hasA = true;
+                    if (std::isdigit((unsigned char)ch)) hasD = true;
+                }
+                if (allhex && (j - i) >= 4 && hasA && hasD) markRange(col, i, j, c);
+                i = j;
+            }
+        } break;
+        case 1: { // Number: optional sign, digits, optional .digits
+            for (size_t i = 0; i < s.size();) {
+                size_t st = i; bool sign = (s[i] == '-' || s[i] == '+');
+                size_t k = i + (sign ? 1 : 0), d = k;
+                while (d < s.size() && std::isdigit((unsigned char)s[d])) d++;
+                if (d > k) {
+                    size_t e = d;
+                    if (e < s.size() && s[e] == '.') {
+                        size_t f = e + 1; while (f < s.size() && std::isdigit((unsigned char)s[f])) f++;
+                        if (f > e + 1) e = f;
+                    }
+                    // Don't color a number that is glued to letters (it's part of
+                    // an identifier like RS9116 / nrf52840, not a standalone value).
+                    bool letterBefore = (st > 0) && std::isalpha((unsigned char)s[st - 1]);
+                    bool letterAfter  = (e < s.size()) && std::isalpha((unsigned char)s[e]);
+                    if (!letterBefore && !letterAfter) markRange(col, st, e, c);
+                    i = e;
+                } else i++;
+            }
+        } break;
+        case 0: default: { // Keywords (whole word, case-insensitive)
+            std::vector<std::string> words; std::string cur;
+            for (char ch : rule.pattern) {
+                if (ch == ' ' || ch == ',' || ch == '\t') { if (!cur.empty()) { words.push_back(cur); cur.clear(); } }
+                else cur += (char)std::toupper((unsigned char)ch);
+            }
+            if (!cur.empty()) words.push_back(cur);
+            if (words.empty()) break;
+            for (size_t i = 0; i < s.size();) {
+                if (!isWordChC(s[i])) { i++; continue; }
+                size_t j = i; while (j < s.size() && isWordChC(s[j])) j++;
+                std::string up; for (size_t k = i; k < j; ++k) up += (char)std::toupper((unsigned char)s[k]);
+                for (auto& w : words) if (w == up) { markRange(col, i, j, c); break; }
+                i = j;
+            }
+        } break;
+        }
+    }
+
+    // Leave the timestamp/direction prefix uncolored — those digits aren't data.
+    // Prefix is "HH:MM:SS.mmm " (13) + "RX "/"TX " (3) as built by formatDisplayLine.
+    size_t prefixLen = (showTimestamp_ ? 13u : 0u) + (showDirection_ ? 3u : 0u);
+    for (size_t i = 0; i < prefixLen && i < col.size(); ++i) col[i] = 0;
+
+    // Collapse the per-character colors into runs.
+    bool anyColor = false;
+    for (size_t i = 0; i < s.size();) {
+        size_t j = i; while (j < s.size() && col[j] == col[i]) j++;
+        dl.spans.push_back({ (int)(j - i), col[i] });
+        if (col[i] != 0) anyColor = true;
+        i = j;
+    }
+    if (!anyColor) dl.spans.clear();  // fast path: nothing colored
+}
+
+std::string SerialApp::lineEndingString() const {
+    switch (lineEndingMode_) {
+        case 1:  return "\n";
+        case 2:  return "\r";
+        case 3:  return "\r\n";
+        case 4:  return std::string(1, '\0');   // NUL terminator
+        default: return "";                      // 0 = None
+    }
+}
+
+void SerialApp::sendCommand(const std::string& command, bool appendEnding, bool echo) {
     if (serialManager_.isConnected()) {
-        // Log sent data
+        // Log the command text (without the auto-appended ending)
         logData(command, false);
-        serialManager_.sendData(command);
+        std::string out = command;
+        if (appendEnding) out += lineEndingString();
+        serialManager_.sendData(out);
+
+        // Echo the command into the Received Data view as TX when direction
+        // display is on. Routed through the pending queue because sendCommand
+        // can be called from the sendEvery/toggle threads, not just the UI.
+        if (echo && showDirection_ && !command.empty()) {
+            std::lock_guard<std::mutex> lock(pendingMutex_);
+            pendingData_.push({ true, command, std::chrono::system_clock::now() });
+        }
     }
 }
 
@@ -1077,23 +1522,31 @@ void SerialApp::toggleConnection() {
         serialManager_.disconnect();
         connected_ = false;
     } else {
+        connectionStatus_.clear();
         if (!availablePorts_.empty() && selectedPortIndex_ < static_cast<int>(availablePorts_.size())) {
             const std::string& selectedPort = availablePorts_[selectedPortIndex_].port;
             int baudRate = baudRates_[selectedBaudRate_];
-            
+
             if (serialManager_.connect(selectedPort, baudRate)) {
                 connected_ = true;
                 configManager_.getConfig().lastPort = selectedPort;
                 configManager_.getConfig().lastBaudRate = baudRate;
+            } else {
+                connectionStatus_ = "Failed to open " + selectedPort +
+                                    " (in use, unplugged, or wrong settings)";
             }
+        } else {
+            connectionStatus_ = "No serial port selected";
         }
     }
 }
 
 void SerialApp::sendEveryLoop() {
     while (sendEveryRunning_) {
-        if (strlen(inputBuffer_) > 0)
-            sendCommand(std::string(inputBuffer_));
+        if (strlen(inputBuffer_) > 0) {
+            std::string payload = hexInput_ ? hexToBytes(inputBuffer_) : std::string(inputBuffer_);
+            if (!payload.empty()) sendCommand(payload);
+        }
 
         std::unique_lock<std::mutex> lk(sendEveryMutex_);
         sendEveryCv_.wait_for(lk,
@@ -1129,12 +1582,17 @@ void SerialApp::clearDataDisplay() {
     // Clear pending queue under its own lock
     {
         std::lock_guard<std::mutex> lock(pendingMutex_);
-        std::queue<std::string> empty;
+        std::queue<PendingEvent> empty;
         std::swap(pendingData_, empty);
     }
     // receivedData_ and partialLine_ are render-thread only, no lock needed
     receivedData_.clear();
     partialLine_.clear();
+    partialColors_.clear();
+    partialHasAnsi_ = false;
+    ansiColor_ = 0;
+    ansiState_ = 0;
+    ansiParams_.clear();
     textSelect_.clearSelection();
 }
 
@@ -1172,6 +1630,9 @@ void SerialApp::loadConfiguration() {
         if (it != baudRates_.end()) {
             selectedBaudRate_ = static_cast<int>(std::distance(baudRates_.begin(), it));
         }
+
+        if (config.lineEndingMode >= 0 && config.lineEndingMode <= 4)
+            lineEndingMode_ = config.lineEndingMode;
     }
 }
 
@@ -1188,6 +1649,8 @@ void SerialApp::saveConfiguration() {
 
     // Save filter
     config.filterString = std::string(filterBuffer_);
+
+    config.lineEndingMode = lineEndingMode_;
 
     configManager_.saveConfig();
 }
@@ -1258,6 +1721,7 @@ bool SerialApp::splitterV(const char* str_id, float* size1, float* size2, float 
 }
 
 void SerialApp::startLogging() {
+    std::lock_guard<std::mutex> lock(logMutex_);
     if (!logFile_.is_open()) {
         logFile_.open(logFilePath_, std::ios::app);
         if (logFile_.is_open()) {
@@ -1267,12 +1731,23 @@ void SerialApp::startLogging() {
             }
             logFile_ << startMsg << std::endl;
             logFile_.flush();
+            logFlushCounter_ = 0;
+            lastLogFlush_ = std::chrono::steady_clock::now();
+            logPartialLine_.clear();
         }
     }
 }
 
 void SerialApp::stopLogging() {
+    std::lock_guard<std::mutex> lock(logMutex_);
     if (logFile_.is_open()) {
+        // Flush any leftover incomplete line so the tail isn't lost.
+        if (!logPartialLine_.empty()) {
+            if (logPartialLine_.back() == '\r') logPartialLine_.pop_back();
+            writeLogLine("[RX] ", logPartialLine_);
+            logPartialLine_.clear();
+        }
+
         std::string stopMsg = "=== Logging stopped ===";
         if (timestampEnabled_) {
             stopMsg = getCurrentTimestamp() + " " + stopMsg;
@@ -1285,46 +1760,111 @@ void SerialApp::stopLogging() {
 }
 
 void SerialApp::logData(const std::string& data, bool isReceived) {
+    std::lock_guard<std::mutex> lock(logMutex_);
     if (!logFile_.is_open() || !loggingEnabled_) return;
 
-    std::string prefix = isReceived ? "[RX] " : "[TX] ";
-    std::string logEntry = prefix + data;
+    if (isReceived) {
+        // Serial data arrives in arbitrary byte chunks, so reassemble complete
+        // lines before writing. Otherwise a logical line split across two reads
+        // gets a spurious timestamp + newline injected in the middle.
+        logPartialLine_ += data;
 
+        size_t start = 0, pos;
+        while ((pos = logPartialLine_.find('\n', start)) != std::string::npos) {
+            std::string line(logPartialLine_, start, pos - start);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            writeLogLine("[RX] ", line);
+            start = pos + 1;
+        }
+        if (start > 0) logPartialLine_.erase(0, start);
+
+        // Guard against an endless no-newline stream growing the buffer forever.
+        static const size_t MAX_LOG_PARTIAL = 65536;
+        if (logPartialLine_.size() > MAX_LOG_PARTIAL) {
+            writeLogLine("[RX] ", logPartialLine_);
+            logPartialLine_.clear();
+        }
+    } else {
+        // TX commands are already a single whole line.
+        std::string line = data;
+        if (!line.empty() && line.back() == '\n') line.pop_back();
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        writeLogLine("[TX] ", line);
+    }
+}
+
+// Writes one complete log line (optionally timestamped) and applies the
+// line-count-based flush. Caller must hold logMutex_.
+void SerialApp::writeLogLine(const char* prefix, const std::string& line) {
+    std::string entry = std::string(prefix) + line + "\n";
     if (timestampEnabled_) {
-        logEntry = getCurrentTimestamp() + " " + logEntry;
+        entry = getCurrentTimestamp() + " " + entry;
     }
+    logFile_ << entry;
 
-    logFile_ << logEntry;
-    if (data.back() != '\n') {
-        logFile_ << '\n';
-    }
-
-    // Flush every 50 lines instead of every line to avoid per-line disk I/O
+    // Flush every 50 lines instead of every line to avoid per-line disk I/O.
+    // A time-based flush in flushLogIfDue() covers the case where fewer than 50
+    // lines arrive and the stream goes idle.
     if (++logFlushCounter_ >= 50) {
         logFile_.flush();
         logFlushCounter_ = 0;
+        lastLogFlush_ = std::chrono::steady_clock::now();
     }
+}
+
+// Flush buffered log lines to disk if the flush interval has elapsed, so data
+// reaches disk even when the line-count threshold isn't met and the serial
+// stream is idle. Called once per frame.
+void SerialApp::flushLogIfDue() {
+    std::lock_guard<std::mutex> lock(logMutex_);
+    if (!logFile_.is_open() || logFlushCounter_ == 0) return;
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastLogFlush_ >= std::chrono::milliseconds(LOG_FLUSH_INTERVAL_MS)) {
+        logFile_.flush();
+        logFlushCounter_ = 0;
+        lastLogFlush_ = now;
+    }
+}
+
+// Thread-safe and allocation-light: localtime_s/_r write into a caller-owned
+// tm (no shared static buffer) and snprintf avoids the stringstream/locale
+// overhead that was costly at high line rates.
+static std::tm localtimeSafe(std::time_t t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
 }
 
 std::string SerialApp::getCurrentTimestamp() {
     auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
-    
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
-    ss << "." << std::setfill('0') << std::setw(3) << ms.count();
-    return ss.str();
+
+    std::tm tm = localtimeSafe(t);
+    char buf[32];
+    int n = std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                          tm.tm_hour, tm.tm_min, tm.tm_sec,
+                          static_cast<int>(ms.count()));
+    return std::string(buf, n > 0 ? static_cast<size_t>(n) : 0);
 }
 
 std::string SerialApp::generateAutoFilename() {
     auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-    
-    std::stringstream ss;
-    ss << "com_log_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S") << ".txt";
-    return ss.str();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+
+    std::tm tm = localtimeSafe(t);
+    char buf[64];
+    int n = std::snprintf(buf, sizeof(buf), "com_log_%04d%02d%02d_%02d%02d%02d.txt",
+                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                          tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return std::string(buf, n > 0 ? static_cast<size_t>(n) : 0);
 }
 
 void SerialApp::openFileDialog() {

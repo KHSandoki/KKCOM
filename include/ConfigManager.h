@@ -24,6 +24,18 @@ struct ExtGroup {
     ExtGroup(const std::string& n) : name(n) { color[0]=0.0f; color[1]=0.0f; color[2]=0.0f; color[3]=0.0f; }
 };
 
+// A user-editable syntax-coloring rule for the Received Data view.
+struct ColorRule {
+    bool enabled = true;
+    int type = 0;             // 0=Keywords, 1=Number, 2=Hex, 3=BracketTag
+    std::string pattern;      // space/comma-separated words (type 0 only)
+    float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    ColorRule() = default;
+    ColorRule(int t, float r, float g, float b, const std::string& p = "")
+        : type(t), pattern(p) { color[0]=r; color[1]=g; color[2]=b; color[3]=1.0f; }
+};
+
 struct AppConfig {
     std::vector<ExtGroup> ext1Groups;
     std::vector<ExtGroup> ext2Groups;
@@ -42,6 +54,10 @@ struct AppConfig {
     int lastBaudRate = 115200;
     std::string filterString;
     bool filterActive = false;
+    int lineEndingMode = 3;  // 0=None, 1=LF, 2=CR, 3=CR+LF (applied to command sends)
+
+    bool syntaxColoring = false;       // master toggle for the Received Data view
+    std::vector<ColorRule> colorRules; // user-editable coloring rules
 
     AppConfig();
     void initializeDefaults();
@@ -65,6 +81,8 @@ private:
     void from_json(const nlohmann::json& j, ExtCommand& cmd);
     void to_json(nlohmann::json& j, const ExtGroup& group);
     void from_json(const nlohmann::json& j, ExtGroup& group);
+    void to_json(nlohmann::json& j, const ColorRule& rule);
+    void from_json(const nlohmann::json& j, ColorRule& rule);
     void to_json(nlohmann::json& j, const AppConfig& config);
     void from_json(const nlohmann::json& j, AppConfig& config);
 };

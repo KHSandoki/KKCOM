@@ -4,109 +4,78 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-KKCOM is a Python-based serial communication GUI application built with tkinter and customtkinter. The application provides a terminal-like interface for serial port communication with features for sending commands, filtering data, and managing custom command sets.
+KKCOM is a C++ serial communication GUI application built with Dear ImGui + GLFW + OpenGL.
+It provides a terminal-like interface for serial port communication: sending commands,
+filtering and coloring received data, HEX I/O, and managing custom command sets.
 
-## Running the Application
+(A legacy Python/tkinter edition previously lived here; it has been removed and the C++
+edition now lives at the repository root.)
 
-```bash
-python main.py
+## Project Structure
+
 ```
-
-The application requires Python with the following dependencies:
-- tkinter (usually bundled with Python)
-- customtkinter
-- pyserial
-
-## Architecture
+CMakeLists.txt        # CMake build configuration
+KKCOM.rc              # Windows resource file (icon + version info)
+build_debug.bat       # Debug build script
+build_release.bat     # Release build script
+include/              # Headers (SerialApp.h, SerialManager.h, ConfigManager.h, version.h, ...)
+src/                  # Sources (main.cpp, SerialApp.cpp, SerialManager.cpp, ConfigManager.cpp, ...)
+third_party/textselect/  # Vendored ImGuiTextSelect (locally patched)
+image/                # Icon / splash assets
+libs/                 # Dear ImGui (gitignored, fetched at build time)
+vcpkg/                # vcpkg (gitignored)
+```
 
 ### Core Components
 
-- **SerialApp Class**: The main application class that handles the entire GUI and serial communication logic
-- **Serial Communication**: Uses pyserial for COM port communication with configurable baudrate
-- **Threading**: Implements separate threads for data reception and periodic command sending
-- **Data Persistence**: Saves/loads custom commands to/from `data.json`
+- **SerialApp** (`src/SerialApp.cpp`): main application class — GUI, received-data view
+  (ASCII/HEX, timestamps, TX/RX, rule-based + ANSI syntax coloring), command sending.
+- **SerialManager** (`src/SerialManager.cpp`): Win32/POSIX serial port I/O, the receive
+  thread, disconnect detection.
+- **ConfigManager** (`src/ConfigManager.cpp`): loads/saves `config.json` (EXT groups,
+  pinned commands, coloring rules, line ending, etc.).
 
-### Key Features
+### Dependencies
 
-1. **Serial Communication**
-   - COM port selection with auto-refresh
-   - Configurable baudrate (300-921600)
-   - Real-time data reception and display
-   - Data filtering capabilities
+- Dear ImGui + GLFW + OpenGL (UI), nlohmann/json (config), ImGuiTextSelect (text selection).
+- glfw3 and nlohmann-json come from vcpkg (`x64-windows-static`). Dear ImGui is fetched into
+  `libs/imgui` at build time. ImGuiTextSelect is vendored under `third_party/`.
 
-2. **Command Management**
-   - EXT tabs with customizable command buttons (100 slots in EXT 1)
-   - Editable button labels and commands
-   - Save/load functionality for command sets
-   - Toggle send feature for alternating commands
+## Build (Release)
 
-3. **UI Layout**
-   - Main text area for received data display
-   - Bottom input section for manual commands
-   - Tabbed interface for different command sets
-   - Scrollable frames for large command lists
-
-### File Structure
-
-- `main.py`: Single-file application containing all functionality
-- `data.json`: Generated file storing custom command configurations (gitignored)
-
-### Threading Architecture
-
-- **Main Thread**: GUI operations and user interactions
-- **Receive Thread**: Continuous serial data reception (`receive_data()`)
-- **Send Every Thread**: Periodic command sending (`send_every()`)
-- **Toggle Send Thread**: Alternating command transmission (`toggle_send()`)
-
-### Data Flow
-
-1. User configures COM port and baudrate
-2. Connection established via `connect_port()`
-3. Receive thread starts monitoring incoming data
-4. Data filtered and displayed in main text area
-5. Commands sent via entry field or custom buttons
-6. Custom commands saved to JSON for persistence
-
----
-
-## C++ Edition (KKCOM_CPP)
-
-The C++ rewrite lives in `KKCOM_CPP/` and uses ImGui + GLFW + OpenGL.
-
-### Build (Release)
-
-Prerequisites: Visual Studio 2019, CMake, vcpkg (already set up in `KKCOM_CPP/vcpkg/`)
+Prerequisites: Visual Studio 2022 BuildTools, CMake, vcpkg (set up in `vcpkg/`).
 
 If `build_release/` already exists (incremental build):
 ```bash
-cd KKCOM_CPP/build_release
+cd build_release
 cmake --build . --config Release
-# Output: KKCOM_CPP/build_release/Release/KKCOM_CPP.exe
+# Output: build_release/Release/KKCOM_CPP.exe
 ```
 
-If a clean build is needed, delete `build_release/` first then run `build_release.bat` (requires interactive terminal with UAC).
+For a clean build, delete `build_release/` then run `build_release.bat`.
 
-### Versioning
+## CI
 
-Version is defined in `KKCOM_CPP/include/version.h`:
+`.github/workflows/build-cpp.yml` builds on a `windows-2022` runner: it fetches Dear ImGui
+into `libs/imgui`, installs glfw3 + nlohmann-json via vcpkg, configures with the
+`Visual Studio 17 2022` generator, builds Release, and uploads `KKCOM_CPP.exe` as an artifact.
+Pushing a `v*` tag also attaches the exe to the corresponding GitHub Release.
+
+## Versioning
+
+Version is defined in `include/version.h`:
 ```cpp
-#define KKCOM_VERSION_BUILD 6
-#define KKCOM_VERSION_STRING "1.0.0"
-#define KKCOM_VERSION_STRING_FULL "1.0.0-beta.6"
+#define KKCOM_VERSION_BUILD 9
+#define KKCOM_VERSION_STRING "1.0.5"
+#define KKCOM_VERSION_STRING_FULL "1.0.5"
 ```
 
-Update these values before building a new release. The window title reads `KKCOM_VERSION_STRING_FULL` at runtime.
+Update these (and the version fields in `KKCOM.rc`) before a new release. The window title
+reads `KKCOM_VERSION_STRING_FULL` at runtime.
 
-### Release to GitHub
+## Release to GitHub
 
-1. Update version in `KKCOM_CPP/include/version.h`
-2. Commit: `git add KKCOM_CPP/include/version.h && git commit -m "Bump version to vX.X.X-betaX"`
-3. Tag: `git tag vX.X.X-betaX && git push origin master && git push origin vX.X.X-betaX`
-4. Rebuild: `cd KKCOM_CPP/build_release && cmake --build . --config Release`
-5. Create release (requires `gh` CLI, installed at `C:\Program Files\GitHub CLI\gh.exe`):
-```bash
-"/c/Program Files/GitHub CLI/gh.exe" release create vX.X.X-betaX \
-  "KKCOM_CPP/build_release/Release/KKCOM_CPP.exe#KKCOM_CPP.exe" \
-  --title "KKCOM C++ Edition vX.X.X-betaX" \
-  --notes "Release notes here"
-```
+1. Update `include/version.h` (and `KKCOM.rc`).
+2. Commit the version bump.
+3. Tag and push: `git tag vX.X.X && git push origin <branch> && git push origin vX.X.X`.
+4. The CI workflow builds the tagged commit and attaches `KKCOM_CPP.exe` to the GitHub Release.
