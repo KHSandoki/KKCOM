@@ -1,10 +1,10 @@
 name: Build KKCOM C++ (Windows)
 
-# Builds the C++/ImGui edition (KKCOM_CPP) on a Windows runner.
+# Builds the C++/ImGui edition on a Windows runner.
 #
-# The bundled third-party sources (Dear ImGui + ImGuiTextSelect) live under
-# KKCOM_CPP/libs/ which is .gitignored, so this workflow fetches them at pinned
-# versions before building. glfw3 and nlohmann-json are installed via the
+# The bundled Dear ImGui sources live under libs/ which is .gitignored, so this
+# workflow fetches them at a pinned version before building (ImGuiTextSelect is
+# vendored under third_party/). glfw3 and nlohmann-json are installed via the
 # runner's preinstalled vcpkg using the x64-windows-static triplet, matching
 # build_release.bat.
 
@@ -12,13 +12,21 @@ on:
   push:
     branches: ["**"]
     paths:
-      - "KKCOM_CPP/**"
+      - "src/**"
+      - "include/**"
+      - "third_party/**"
+      - "CMakeLists.txt"
+      - "KKCOM.rc"
       - ".github/workflows/build-cpp.yml"
     tags:
       - "v*"
   pull_request:
     paths:
-      - "KKCOM_CPP/**"
+      - "src/**"
+      - "include/**"
+      - "third_party/**"
+      - "CMakeLists.txt"
+      - "KKCOM.rc"
       - ".github/workflows/build-cpp.yml"
   workflow_dispatch: {}
 
@@ -38,7 +46,6 @@ jobs:
 
       - name: Fetch bundled dependencies (ImGui)
         shell: bash
-        working-directory: KKCOM_CPP
         run: |
           set -euo pipefail
           # Dear ImGui -> libs/imgui (provides backends/ and misc/cpp/).
@@ -59,7 +66,6 @@ jobs:
 
       - name: Configure (CMake, Release, static runtime)
         shell: bash
-        working-directory: KKCOM_CPP
         run: |
           set -euo pipefail
           cmake -S . -B build_release \
@@ -71,18 +77,17 @@ jobs:
 
       - name: Build
         shell: bash
-        working-directory: KKCOM_CPP
         run: cmake --build build_release --config Release --parallel
 
       - name: Upload executable artifact
         uses: actions/upload-artifact@v4
         with:
           name: KKCOM_CPP-${{ github.sha }}
-          path: KKCOM_CPP/build_release/Release/KKCOM_CPP.exe
+          path: build_release/Release/KKCOM_CPP.exe
           if-no-files-found: error
 
       - name: Attach executable to release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: KKCOM_CPP/build_release/Release/KKCOM_CPP.exe
+          files: build_release/Release/KKCOM_CPP.exe
