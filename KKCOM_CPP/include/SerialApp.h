@@ -18,6 +18,13 @@
 #include <fstream>
 #include <chrono>
 
+// A run of `len` characters in a line's display string drawn in `color`
+// (0 = default text color). Cached so coloring is computed once per line.
+struct ColorSpan {
+    int len;
+    ImU32 color;
+};
+
 // One rendered line in the Received Data view. Raw bytes are kept so the line
 // can be re-rendered as ASCII or hex and (optionally) prefixed with a timestamp
 // and TX/RX direction without losing information.
@@ -26,6 +33,7 @@ struct DisplayLine {
     std::string bytes;                          // raw line bytes (no trailing newline)
     std::chrono::system_clock::time_point time;
     std::string display;                        // cached formatted text for render + selection
+    std::vector<ColorSpan> spans;               // empty = draw whole line in default color
 };
 
 // A pending RX chunk or TX line handed from the serial/UI threads to the
@@ -70,6 +78,7 @@ private:
     bool showTimestamp_ = false;  // prefix each line with a timestamp
     bool showDirection_ = false;  // prefix RX/TX and echo sent commands into the view
     bool hexInput_ = false;       // interpret the bottom send box as hex bytes
+    bool showColoringWindow_ = false;  // syntax-coloring rule editor window
     bool autoScroll_ = true;
     int itemsRemovedFromFront_ = 0;
     float prevScrollY_ = 0.0f;
@@ -171,7 +180,9 @@ private:
     static std::string bytesToHex(const std::string& bytes);
     static std::string hexToBytes(const std::string& hex);
     std::string formatDisplayLine(const DisplayLine& dl) const;
+    void computeSpans(DisplayLine& dl) const;  // fill dl.spans from the coloring rules
     void reformatDisplay();   // re-render all cached lines after a view-option change
+    void renderColoringWindow();
     void refreshPorts();
     void toggleConnection();
 

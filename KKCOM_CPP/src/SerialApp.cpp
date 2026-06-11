@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cstdio>
 #include <ctime>
+#include <cctype>
 #include <sstream>
 #include <iomanip>
 #ifdef _WIN32
@@ -250,6 +251,8 @@ void SerialApp::renderMainWindow() {
             viewChanged |= ImGui::MenuItem("Hex Display", nullptr, &displayHex_);
             viewChanged |= ImGui::MenuItem("Show Timestamp", nullptr, &showTimestamp_);
             viewChanged |= ImGui::MenuItem("Show TX/RX (echo sent)", nullptr, &showDirection_);
+            viewChanged |= ImGui::MenuItem("Syntax Coloring", nullptr, &configManager_.getConfig().syntaxColoring);
+            if (ImGui::MenuItem("Coloring Rules...")) showColoringWindow_ = true;
             if (viewChanged) reformatDisplay();   // re-render cached lines
             ImGui::Separator();
             ImGui::MenuItem("Hex Input (send box)", nullptr, &hexInput_);
@@ -352,7 +355,8 @@ void SerialApp::renderMainWindow() {
     
     // Render edit window
     renderEditWindow();
-    
+    renderColoringWindow();
+
     // Show demo window if requested
     if (showDemo_) {
         ImGui::ShowDemoWindow(&showDemo_);
@@ -537,7 +541,24 @@ void SerialApp::renderDataDisplay() {
     clipper.Begin(static_cast<int>(receivedData_.size()));
     while (clipper.Step()) {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-            ImGui::TextUnformatted(receivedData_[i].display.c_str());
+            const DisplayLine& dl = receivedData_[i];
+            if (dl.spans.empty()) {
+                ImGui::TextUnformatted(dl.display.c_str());
+            } else {
+                // Colored line: draw each span as a contiguous segment. SameLine(0,0)
+                // butts them together so glyph positions match the plain string
+                // (keeps TextSelect aligned — verified).
+                const char* base = dl.display.c_str();
+                size_t off = 0;
+                for (size_t k = 0; k < dl.spans.size(); ++k) {
+                    const ColorSpan& sp = dl.spans[k];
+                    if (k) ImGui::SameLine(0.0f, 0.0f);
+                    if (sp.color) ImGui::PushStyleColor(ImGuiCol_Text, sp.color);
+                    ImGui::TextUnformatted(base + off, base + off + sp.len);
+                    if (sp.color) ImGui::PopStyleColor();
+                    off += sp.len;
+                }
+            }
         }
     }
 
@@ -969,6 +990,7 @@ void SerialApp::drainPendingData() {
                 return;
         }
         dl.display = formatDisplayLine(dl);
+        computeSpans(dl);
         receivedData_.push_back(std::move(dl));
 
         // TextSelect tracks the selection by line index, so popping lines off
@@ -1224,7 +1246,170 @@ std::string SerialApp::formatDisplayLine(const DisplayLine& dl) const {
 }
 
 void SerialApp::reformatDisplay() {
-    for (auto& dl : receivedData_) dl.display = formatDisplayLine(dl);
+    for (auto& dl : receivedData_) {
+        dl.display = formatDisplayLine(dl);
+        computeSpans(dl);
+    }
+}
+
+void SerialApp::renderColoringWindow() {
+    if (!showColoringWindow_) return;
+    auto& config = configManager_.getConfig();
+
+    ImGui::SetNextWindowSize(ImVec2(560, 380), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Coloring Rules", &showColoringWindow_)) {
+        bool changed = false;
+        changed |= ImGui::Checkbox("Enable syntax coloring", &config.syntaxColoring);
+        ImGui::TextDisabled("Top-to-bottom, first match wins. Keyword lists are space/comma separated.");
+        ImGui::Separator();
+
+        const char* typeItems[] = { "Keywords", "Number", "Hex", "[Bracket]" };
+        int deleteIdx = -1;
+        for (int i = 0; i < (int)config.colorRules.size(); ++i) {
+            ColorRule& r = config.colorRules[i];
+            ImGui::PushID(i);
+            changed |= ImGui::Checkbox("##en", &r.enabled);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            changed |= ImGui::Combo("##type", &r.type, typeItems, IM_ARRAYSIZE(typeItems));
+            ImGui::SameLine();
+            changed |= ImGui::ColorEdit3("##col", r.color, ImGuiColorEditFlags_NoInputs);
+            ImGui::SameLine();
+            if (r.type == 0) {
+                ImGui::SetNextItemWidth(-40);
+                changed |= ImGui::InputText("##pat", &r.pattern);
+            } else {
+                ImGui::TextDisabled("(structural rule)");
+            }
+            ImGui::SameLine(ImGui::GetWindowWidth() - 34);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+            if (ImGui::SmallButton("X")) deleteIdx = i;
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        if (deleteIdx >= 0) {
+            config.colorRules.erase(config.colorRules.begin() + deleteIdx);
+            changed = true;
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("+ Keyword")) { config.colorRules.push_back(ColorRule(0, 1.0f, 1.0f, 1.0f, "WORD")); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("+ Number"))  { config.colorRules.push_back(ColorRule(1, 0.40f, 0.85f, 1.0f)); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("+ Hex"))     { config.colorRules.push_back(ColorRule(2, 1.0f, 0.65f, 0.30f)); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("+ [Tag]"))   { config.colorRules.push_back(ColorRule(3, 0.95f, 0.85f, 0.40f)); changed = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Save Config")) saveConfiguration();
+
+        if (changed) reformatDisplay();
+    }
+    ImGui::End();
+}
+
+// --- Syntax-coloring tokenizer helpers (file-local) ---
+namespace {
+inline bool isHexDigitC(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+inline bool isWordChC(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
+// Color [a,b) but only chars not already colored (first matching rule wins).
+inline void markRange(std::vector<ImU32>& col, size_t a, size_t b, ImU32 c) {
+    for (size_t i = a; i < b; ++i) if (col[i] == 0) col[i] = c;
+}
+}
+
+void SerialApp::computeSpans(DisplayLine& dl) const {
+    dl.spans.clear();
+    const auto& config = configManager_.getConfig();
+    if (!config.syntaxColoring || dl.display.empty()) return;
+
+    const std::string& s = dl.display;
+    std::vector<ImU32> col(s.size(), 0);   // 0 = default text color
+
+    // Apply rules top-to-bottom; markRange only colors as-yet-uncolored chars,
+    // so the first matching rule wins (list order == priority).
+    for (const auto& rule : config.colorRules) {
+        if (!rule.enabled) continue;
+        ImU32 c = ImGui::ColorConvertFloat4ToU32(ImVec4(rule.color[0], rule.color[1], rule.color[2], 1.0f));
+        if (c == 0) c = IM_COL32(1, 1, 1, 255);  // never collide with the 0 sentinel
+
+        switch (rule.type) {
+        case 3: { // [Bracket tag]
+            for (size_t i = 0; i < s.size();) {
+                if (s[i] == '[') {
+                    size_t j = i + 1; while (j < s.size() && s[j] != ']') j++;
+                    if (j < s.size()) { markRange(col, i, j + 1, c); i = j + 1; continue; }
+                }
+                i++;
+            }
+        } break;
+        case 2: { // Hex: 0x.. or a bare hex token (>=4 chars, has a letter AND a digit)
+            for (size_t i = 0; i + 1 < s.size();) {
+                if (s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X')) {
+                    size_t j = i + 2; while (j < s.size() && isHexDigitC(s[j])) j++;
+                    if (j > i + 2) { markRange(col, i, j, c); i = j; continue; }
+                }
+                i++;
+            }
+            for (size_t i = 0; i < s.size();) {
+                if (!isWordChC(s[i])) { i++; continue; }
+                size_t j = i; while (j < s.size() && isWordChC(s[j])) j++;
+                bool allhex = true, hasA = false, hasD = false;
+                for (size_t k = i; k < j; ++k) {
+                    char ch = s[k];
+                    if (!isHexDigitC(ch)) { allhex = false; break; }
+                    if (std::isalpha((unsigned char)ch)) hasA = true;
+                    if (std::isdigit((unsigned char)ch)) hasD = true;
+                }
+                if (allhex && (j - i) >= 4 && hasA && hasD) markRange(col, i, j, c);
+                i = j;
+            }
+        } break;
+        case 1: { // Number: optional sign, digits, optional .digits
+            for (size_t i = 0; i < s.size();) {
+                size_t st = i; bool sign = (s[i] == '-' || s[i] == '+');
+                size_t k = i + (sign ? 1 : 0), d = k;
+                while (d < s.size() && std::isdigit((unsigned char)s[d])) d++;
+                if (d > k) {
+                    size_t e = d;
+                    if (e < s.size() && s[e] == '.') {
+                        size_t f = e + 1; while (f < s.size() && std::isdigit((unsigned char)s[f])) f++;
+                        if (f > e + 1) e = f;
+                    }
+                    markRange(col, st, e, c); i = e;
+                } else i++;
+            }
+        } break;
+        case 0: default: { // Keywords (whole word, case-insensitive)
+            std::vector<std::string> words; std::string cur;
+            for (char ch : rule.pattern) {
+                if (ch == ' ' || ch == ',' || ch == '\t') { if (!cur.empty()) { words.push_back(cur); cur.clear(); } }
+                else cur += (char)std::toupper((unsigned char)ch);
+            }
+            if (!cur.empty()) words.push_back(cur);
+            if (words.empty()) break;
+            for (size_t i = 0; i < s.size();) {
+                if (!isWordChC(s[i])) { i++; continue; }
+                size_t j = i; while (j < s.size() && isWordChC(s[j])) j++;
+                std::string up; for (size_t k = i; k < j; ++k) up += (char)std::toupper((unsigned char)s[k]);
+                for (auto& w : words) if (w == up) { markRange(col, i, j, c); break; }
+                i = j;
+            }
+        } break;
+        }
+    }
+
+    // Collapse the per-character colors into runs.
+    bool anyColor = false;
+    for (size_t i = 0; i < s.size();) {
+        size_t j = i; while (j < s.size() && col[j] == col[i]) j++;
+        dl.spans.push_back({ (int)(j - i), col[i] });
+        if (col[i] != 0) anyColor = true;
+        i = j;
+    }
+    if (!anyColor) dl.spans.clear();  // fast path: nothing colored
 }
 
 std::string SerialApp::lineEndingString() const {
