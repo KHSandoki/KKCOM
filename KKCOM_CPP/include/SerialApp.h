@@ -34,6 +34,7 @@ struct DisplayLine {
     std::chrono::system_clock::time_point time;
     std::string display;                        // cached formatted text for render + selection
     std::vector<ColorSpan> spans;               // empty = draw whole line in default color
+    std::vector<ImU32> ansiColors;              // per-byte ANSI color (empty = no ANSI on this line)
 };
 
 // A pending RX chunk or TX line handed from the serial/UI threads to the
@@ -72,6 +73,13 @@ private:
     std::queue<PendingEvent> pendingData_;
     std::mutex pendingMutex_;
     TextSelect textSelect_;
+
+    // ANSI (SGR) escape-code parser state — persists across read chunks and lines.
+    std::vector<ImU32> partialColors_;  // per-char ANSI color for the in-progress RX line
+    ImU32 ansiColor_ = 0;               // current foreground color (0 = default)
+    bool partialHasAnsi_ = false;       // any non-default color seen on the current line
+    int ansiState_ = 0;                 // 0=normal, 1=after ESC, 2=inside CSI
+    std::string ansiParams_;            // CSI parameter bytes
 
     // Received Data view options
     bool displayHex_ = false;     // show received/sent bytes as hex
@@ -180,7 +188,8 @@ private:
     static std::string bytesToHex(const std::string& bytes);
     static std::string hexToBytes(const std::string& hex);
     std::string formatDisplayLine(const DisplayLine& dl) const;
-    void computeSpans(DisplayLine& dl) const;  // fill dl.spans from the coloring rules
+    void computeSpans(DisplayLine& dl) const;  // fill dl.spans from ANSI colors or rules
+    void applySgr(const std::string& params);  // apply an ANSI SGR code to ansiColor_
     void reformatDisplay();   // re-render all cached lines after a view-option change
     void renderColoringWindow();
     void refreshPorts();

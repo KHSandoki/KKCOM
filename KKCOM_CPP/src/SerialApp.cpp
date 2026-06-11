@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <cctype>
 #include <sstream>
@@ -1025,32 +1026,41 @@ void SerialApp::drainPendingData() {
             continue;
         }
 
-        // RX chunk: assemble complete lines, keeping partialLine_ for the
-        // incomplete tail. Bytes are stored without the trailing newline.
-        partialLine_ += ev.bytes;
-        size_t searchStart = 0, pos;
-        while ((pos = partialLine_.find('\n', searchStart)) != std::string::npos) {
-            std::string line(partialLine_, searchStart, pos - searchStart);
-            if (!line.empty() && line.back() == '\r')
-                line.pop_back();
-            searchStart = pos + 1;
+        // RX chunk: run each byte through the ANSI (SGR) escape-code state
+        // machine, stripping escape codes and recording the active color per
+        // character. Lines are emitted on '\n'; parser/color state persists
+        // across chunks and lines (ANSI colors carry until reset).
+        auto emitLine = [&](const std::chrono::system_clock::time_point& t) {
             DisplayLine dl;
             dl.isTx = false;
-            dl.bytes = std::move(line);
-            dl.time = ev.time;
+            dl.bytes = partialLine_;
+            dl.time = t;
+            if (partialHasAnsi_) dl.ansiColors = partialColors_;
             pushLine(std::move(dl));
-        }
-        if (searchStart > 0)
-            partialLine_.erase(0, searchStart);
+            partialLine_.clear();
+            partialColors_.clear();
+            partialHasAnsi_ = (ansiColor_ != 0);   // color carries to the next line
+        };
 
-        // Cap partial line to avoid unbounded growth on no-newline streams
-        while (partialLine_.size() > MAX_PARTIAL_LINE) {
-            DisplayLine dl;
-            dl.isTx = false;
-            dl.bytes = partialLine_.substr(0, MAX_PARTIAL_LINE);
-            dl.time = ev.time;
-            pushLine(std::move(dl));
-            partialLine_.erase(0, MAX_PARTIAL_LINE);
+        for (unsigned char ch : ev.bytes) {
+            if (ansiState_ == 1) {                 // just saw ESC
+                ansiState_ = 0;
+                if (ch == '[') { ansiState_ = 2; ansiParams_.clear(); continue; }
+                // not a CSI we handle — fall through and process ch normally
+            }
+            if (ansiState_ == 2) {                 // inside CSI, waiting for final byte
+                if ((ch >= '0' && ch <= '9') || ch == ';') { ansiParams_ += (char)ch; continue; }
+                if (ch == 'm') applySgr(ansiParams_);
+                ansiState_ = 0;                    // non-'m' final bytes: ignore the sequence
+                continue;
+            }
+            if (ch == 0x1B) { ansiState_ = 1; continue; }   // ESC
+            if (ch == '\r') continue;                        // drop CR
+            if (ch == '\n') { emitLine(ev.time); continue; }
+            partialLine_ += (char)ch;
+            partialColors_.push_back(ansiColor_);
+            if (ansiColor_ != 0) partialHasAnsi_ = true;
+            if (partialLine_.size() >= MAX_PARTIAL_LINE) emitLine(ev.time);
         }
     }
 }
@@ -1308,6 +1318,35 @@ void SerialApp::renderColoringWindow() {
     ImGui::End();
 }
 
+// Standard / bright ANSI 16-color foreground palette. Black is lightened so it
+// stays visible on the dark background.
+namespace {
+const ImU32 kAnsiFg[8] = {
+    IM_COL32( 90, 90, 90,255), IM_COL32(205, 49, 49,255), IM_COL32( 13,188,121,255), IM_COL32(229,229, 16,255),
+    IM_COL32( 54,123,229,255), IM_COL32(188, 63,188,255), IM_COL32( 17,168,205,255), IM_COL32(229,229,229,255)
+};
+const ImU32 kAnsiFgBright[8] = {
+    IM_COL32(127,127,127,255), IM_COL32(241, 76, 76,255), IM_COL32( 35,209,139,255), IM_COL32(245,245, 67,255),
+    IM_COL32( 59,142,234,255), IM_COL32(214,112,214,255), IM_COL32( 41,184,219,255), IM_COL32(255,255,255,255)
+};
+}
+
+void SerialApp::applySgr(const std::string& params) {
+    if (params.empty()) { ansiColor_ = 0; return; }   // ESC[m == reset
+    size_t i = 0;
+    while (true) {
+        size_t j = params.find(';', i);
+        std::string tok = params.substr(i, (j == std::string::npos ? params.size() : j) - i);
+        int code = tok.empty() ? 0 : std::atoi(tok.c_str());
+        if (code == 0 || code == 39) ansiColor_ = 0;                  // reset / default fg
+        else if (code >= 30 && code <= 37) ansiColor_ = kAnsiFg[code - 30];
+        else if (code >= 90 && code <= 97) ansiColor_ = kAnsiFgBright[code - 90];
+        // other SGR codes (bold, background, underline, ...) are ignored
+        if (j == std::string::npos) break;
+        i = j + 1;
+    }
+}
+
 // --- Syntax-coloring tokenizer helpers (file-local) ---
 namespace {
 inline bool isHexDigitC(char c) {
@@ -1322,8 +1361,30 @@ inline void markRange(std::vector<ImU32>& col, size_t a, size_t b, ImU32 c) {
 
 void SerialApp::computeSpans(DisplayLine& dl) const {
     dl.spans.clear();
+    if (dl.display.empty()) return;
     const auto& config = configManager_.getConfig();
-    if (!config.syntaxColoring || dl.display.empty()) return;
+
+    // Device-specified ANSI colors take precedence over rule coloring (the line
+    // already carries colors). Only in ASCII mode — hex display reformats bytes.
+    if (!dl.ansiColors.empty() && !displayHex_) {
+        size_t prefixLen = (dl.display.size() >= dl.bytes.size())
+                         ? dl.display.size() - dl.bytes.size() : 0;
+        std::vector<ImU32> col(dl.display.size(), 0);
+        size_t n = std::min(dl.ansiColors.size(), dl.bytes.size());
+        for (size_t k = 0; k < n && prefixLen + k < col.size(); ++k)
+            col[prefixLen + k] = dl.ansiColors[k];
+        bool any = false;
+        for (size_t i = 0; i < col.size();) {
+            size_t j = i; while (j < col.size() && col[j] == col[i]) j++;
+            dl.spans.push_back({ (int)(j - i), col[i] });
+            if (col[i]) any = true;
+            i = j;
+        }
+        if (!any) dl.spans.clear();
+        return;
+    }
+
+    if (!config.syntaxColoring) return;
 
     const std::string& s = dl.display;
     std::vector<ImU32> col(s.size(), 0);   // 0 = default text color
@@ -1378,7 +1439,12 @@ void SerialApp::computeSpans(DisplayLine& dl) const {
                         size_t f = e + 1; while (f < s.size() && std::isdigit((unsigned char)s[f])) f++;
                         if (f > e + 1) e = f;
                     }
-                    markRange(col, st, e, c); i = e;
+                    // Don't color a number that is glued to letters (it's part of
+                    // an identifier like RS9116 / nrf52840, not a standalone value).
+                    bool letterBefore = (st > 0) && std::isalpha((unsigned char)s[st - 1]);
+                    bool letterAfter  = (e < s.size()) && std::isalpha((unsigned char)s[e]);
+                    if (!letterBefore && !letterAfter) markRange(col, st, e, c);
+                    i = e;
                 } else i++;
             }
         } break;
@@ -1518,6 +1584,11 @@ void SerialApp::clearDataDisplay() {
     // receivedData_ and partialLine_ are render-thread only, no lock needed
     receivedData_.clear();
     partialLine_.clear();
+    partialColors_.clear();
+    partialHasAnsi_ = false;
+    ansiColor_ = 0;
+    ansiState_ = 0;
+    ansiParams_.clear();
     textSelect_.clearSelection();
 }
 
