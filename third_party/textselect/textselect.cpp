@@ -121,7 +121,15 @@ static std::size_t getCharIndex(std::string_view s, float cursorPosX, std::size_
 
 // Wrapper for getCharIndex providing the initial bounds.
 static std::size_t getCharIndex(std::string_view s, float cursorPosX) {
-    return getCharIndex(s, cursorPosX, 0, utf8Length(s));
+    std::size_t len = utf8Length(s);
+    // Forgiving end-of-line: nothing follows the last character, so if the
+    // cursor is anywhere at/after the start of the last char, snap to end. This
+    // lets you select the final character of a line that ends near the window
+    // edge without having to drag precisely past it. [Local patch vs v1.3.1]
+    if (len > 0 && cursorPosX >= substringSizeX(s, 0, len - 1)) {
+        return len;
+    }
+    return getCharIndex(s, cursorPosX, 0, len);
 }
 
 // Gets the scroll delta for the given cursor position and window bounds.
