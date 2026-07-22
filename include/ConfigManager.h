@@ -56,6 +56,11 @@ struct AppConfig {
     bool filterActive = false;
     int lineEndingMode = 3;  // 0=None, 1=LF, 2=CR, 3=CR+LF (applied to command sends)
 
+    // When true, KKCOM watches for a "release request" trigger file and, when it
+    // appears, disconnects the serial port so another program (e.g. an automation
+    // agent driving the same COM) can take it. Reconnect is manual.
+    bool comReleaseWatch = true;
+
     bool syntaxColoring = false;       // master toggle for the Received Data view
     std::vector<ColorRule> colorRules; // user-editable coloring rules
 

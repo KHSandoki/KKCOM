@@ -189,6 +189,7 @@ void ConfigManager::to_json(nlohmann::json& j, const AppConfig& config) {
     j["filterString"]    = config.filterString;
     j["filterActive"]    = config.filterActive;
     j["lineEndingMode"]  = config.lineEndingMode;
+    j["comReleaseWatch"] = config.comReleaseWatch;
 
     j["syntaxColoring"]  = config.syntaxColoring;
     j["colorRules"] = nlohmann::json::array();
@@ -249,6 +250,7 @@ void ConfigManager::from_json(const nlohmann::json& j, AppConfig& config) {
     if (j.contains("filterString")) j["filterString"].get_to(config.filterString);
     if (j.contains("filterActive")) j["filterActive"].get_to(config.filterActive);
     if (j.contains("lineEndingMode")) j["lineEndingMode"].get_to(config.lineEndingMode);
+    if (j.contains("comReleaseWatch")) j["comReleaseWatch"].get_to(config.comReleaseWatch);
 
     if (j.contains("syntaxColoring")) j["syntaxColoring"].get_to(config.syntaxColoring);
     if (j.contains("colorRules") && j["colorRules"].is_array()) {

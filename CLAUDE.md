@@ -41,6 +41,26 @@ vcpkg/                # vcpkg (gitignored)
 - glfw3 and nlohmann-json come from vcpkg (`x64-windows-static`). Dear ImGui is fetched into
   `libs/imgui` at build time. ImGuiTextSelect is vendored under `third_party/`.
 
+## Serial port hand-off (automation)
+
+On Windows a COM port is exclusive: while KKCOM is connected no other program can open
+it. To let an external tool (a script, or an automation agent like Claude Code) use the
+port, KKCOM watches for a trigger file and releases the port when it appears:
+
+- **Trigger file:** `kkcom_release.request` in KKCOM's working directory (same folder as
+  `config.json`). The exact path is shown under **File → Trigger file...** (with a Copy
+  path button).
+- Create that file (any/empty contents) → KKCOM disconnects, deletes the file to
+  acknowledge, and writes `kkcom_release.status` (JSON: `released`, `port`, `ts`). Poll
+  for the request file to disappear (or read the status file) to confirm before opening
+  the port from your tool.
+- **Reconnect is manual** — click **Connect** in KKCOM when you're done. By design KKCOM
+  never auto-reconnects, so it won't grab the port back while your tool is still using it.
+- The watcher can be toggled under **File → Release COM on trigger file** (persisted as
+  `comReleaseWatch` in `config.json`). Implemented in `SerialApp::comReleaseWatchLoop`
+  (detects the file on a background thread) and `SerialApp::handleComReleaseRequest`
+  (does the disconnect on the UI thread).
+
 ## Build (Release)
 
 Prerequisites: Visual Studio 2022 BuildTools, CMake, vcpkg (set up in `vcpkg/`).

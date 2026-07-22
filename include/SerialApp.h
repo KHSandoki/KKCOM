@@ -103,6 +103,20 @@ private:
     bool connected_ = false;
     std::string connectionStatus_;  // inline error/status shown in the connection panel
 
+    // COM release-on-request: lets an external tool (e.g. Claude Code) drop a
+    // trigger file to ask KKCOM to let go of the serial port so it can use it.
+    // A watcher thread only detects the file; the actual disconnect runs on the
+    // UI thread (via comReleaseRequested_) to avoid racing the receive thread.
+    // Reconnect is manual (the Connect button).
+    std::thread comReleaseThread_;
+    std::atomic<bool> comReleaseWatchRunning_{false};
+    std::atomic<bool> comReleaseEnabled_{true};   // mirrors AppConfig::comReleaseWatch
+    std::atomic<bool> comReleaseRequested_{false};
+    std::condition_variable comReleaseCv_;
+    std::mutex comReleaseMutex_;
+    std::string comReleaseRequestPath_;  // caller creates this file to request release
+    std::string comReleaseStatusPath_;   // KKCOM writes the outcome here (ack)
+
     // Send every functionality
     bool sendEveryEnabled_ = false;
     int sendEveryInterval_ = 1;
@@ -194,6 +208,10 @@ private:
     void renderColoringWindow();
     void refreshPorts();
     void toggleConnection();
+
+    // COM release-on-request (see members above)
+    void comReleaseWatchLoop();      // watcher thread: polls for the trigger file
+    void handleComReleaseRequest();  // UI thread: release the port + write the ack
 
     // Threading methods
     void sendEveryLoop();

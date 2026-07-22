@@ -19,6 +19,7 @@
 #include <cctype>
 #include <sstream>
 #include <iomanip>
+#include <filesystem>
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
@@ -134,6 +135,21 @@ bool SerialApp::initialize() {
     
     // Refresh available ports
     refreshPorts();
+
+    // COM release-on-request: the trigger and status files live in the working
+    // directory (next to config.json / com_log.txt). Clear any stale trigger
+    // left by a previous run so we don't release the port unexpectedly on launch,
+    // then start the watcher thread.
+    {
+        std::error_code ec;
+        std::filesystem::path cwd = std::filesystem::current_path(ec);
+        comReleaseRequestPath_ = (cwd / "kkcom_release.request").string();
+        comReleaseStatusPath_  = (cwd / "kkcom_release.status").string();
+        std::filesystem::remove(comReleaseRequestPath_, ec);
+    }
+    comReleaseEnabled_ = configManager_.getConfig().comReleaseWatch;
+    comReleaseWatchRunning_ = true;
+    comReleaseThread_ = std::thread(&SerialApp::comReleaseWatchLoop, this);
     
     // Main loop. Pacing is handled by vsync (glfwSwapInterval(1) above), which
     // blocks glfwSwapBuffers until the display refresh — so no manual frame
@@ -190,6 +206,8 @@ void SerialApp::shutdown() {
     sendEveryCv_.notify_all();
     toggleSendRunning_ = false;
     toggleSendCv_.notify_all();
+    comReleaseWatchRunning_ = false;
+    comReleaseCv_.notify_all();
 
     if (sendEveryThread_.joinable()) {
         sendEveryThread_.join();
@@ -197,6 +215,10 @@ void SerialApp::shutdown() {
 
     if (toggleSendThread_.joinable()) {
         toggleSendThread_.join();
+    }
+
+    if (comReleaseThread_.joinable()) {
+        comReleaseThread_.join();
     }
     
     // Disconnect serial
@@ -218,6 +240,13 @@ void SerialApp::renderMainWindow() {
         connectionStatus_ = "Connection lost — device disconnected";
     }
 
+    // An external tool asked us (via the trigger file) to release the COM port.
+    // Detection happens on the watcher thread; do the actual disconnect here on
+    // the UI thread so it can't race the receive thread or a UI connect toggle.
+    if (comReleaseRequested_.exchange(false)) {
+        handleComReleaseRequest();
+    }
+
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
@@ -237,6 +266,24 @@ void SerialApp::renderMainWindow() {
             }
             if (ImGui::MenuItem("Load Config")) {
                 loadConfiguration();
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("COM hand-off (automation)");
+            {
+                bool en = comReleaseEnabled_.load();
+                if (ImGui::MenuItem("Release COM on trigger file", nullptr, &en)) {
+                    comReleaseEnabled_.store(en);
+                    configManager_.getConfig().comReleaseWatch = en;
+                    saveConfiguration();
+                }
+            }
+            if (ImGui::BeginMenu("Trigger file...")) {
+                ImGui::TextDisabled("Create this file to make KKCOM release the port:");
+                ImGui::TextWrapped("%s", comReleaseRequestPath_.c_str());
+                if (ImGui::Button("Copy path")) {
+                    ImGui::SetClipboardText(comReleaseRequestPath_.c_str());
+                }
+                ImGui::EndMenu();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Exit")) {
@@ -1541,6 +1588,53 @@ void SerialApp::toggleConnection() {
     }
 }
 
+void SerialApp::comReleaseWatchLoop() {
+    // Poll for the trigger file. Detection only — the disconnect itself runs on
+    // the UI thread (handleComReleaseRequest) so it can't race the receive thread
+    // or a UI-driven connect/disconnect. This keeps working when the window is
+    // unfocused or minimized, which is exactly when an external tool needs the
+    // port. Polling a single stat every 200 ms is negligible overhead.
+    while (comReleaseWatchRunning_) {
+        if (comReleaseEnabled_.load() && !comReleaseRequestPath_.empty()) {
+            std::error_code ec;
+            if (std::filesystem::exists(comReleaseRequestPath_, ec)) {
+                comReleaseRequested_ = true;   // consumed on the UI thread
+            }
+        }
+        std::unique_lock<std::mutex> lk(comReleaseMutex_);
+        comReleaseCv_.wait_for(lk, std::chrono::milliseconds(200),
+                               [this] { return !comReleaseWatchRunning_.load(); });
+    }
+}
+
+void SerialApp::handleComReleaseRequest() {
+    // Runs on the UI thread. Release the port (if held), acknowledge by removing
+    // the trigger file, and write a small JSON status file so the caller can
+    // confirm what happened. Reconnect is manual (the Connect button).
+    const std::string releasedPort = configManager_.getConfig().lastPort;
+    const bool wasConnected = connected_;
+
+    if (connected_) {
+        serialManager_.disconnect();
+        connected_ = false;
+    }
+
+    std::error_code ec;
+    std::filesystem::remove(comReleaseRequestPath_, ec);  // ack: request consumed
+
+    std::ofstream sf(comReleaseStatusPath_, std::ios::trunc);
+    if (sf.is_open()) {
+        sf << "{\"released\": " << (wasConnected ? "true" : "false")
+           << ", \"port\": \"" << (wasConnected ? releasedPort : std::string())
+           << "\", \"connected\": false"
+           << ", \"ts\": " << static_cast<long long>(std::time(nullptr)) << "}\n";
+    }
+
+    connectionStatus_ = wasConnected
+        ? ("COM " + releasedPort + " released on request — click Connect to reconnect")
+        : "Release requested — no COM was connected";
+}
+
 void SerialApp::sendEveryLoop() {
     while (sendEveryRunning_) {
         if (strlen(inputBuffer_) > 0) {
@@ -1633,6 +1727,8 @@ void SerialApp::loadConfiguration() {
 
         if (config.lineEndingMode >= 0 && config.lineEndingMode <= 4)
             lineEndingMode_ = config.lineEndingMode;
+
+        comReleaseEnabled_ = config.comReleaseWatch;
     }
 }
 
